@@ -37,6 +37,9 @@ apps/web/playwright/
 
 tsconfig.tsbuildinfo
 
+# Local tools-dev bind/port overrides. Keep environment-specific IPs out of git.
+tools-dev.config.json
+
 .claude-sessions/*
 
 .cursor/

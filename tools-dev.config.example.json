@@ -1,0 +1,8 @@
+{
+  "host": "0.0.0.0",
+  "bindHost": "0.0.0.0",
+  "daemonPort": 3001,
+  "webPort": 3000,
+  "allowedDevOrigins": ["13.209.4.19"],
+  "allowedOrigins": ["http://13.209.4.19:3000"]
+}

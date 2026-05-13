@@ -7,6 +7,7 @@ import {
   allowedBrowserPorts,
   configuredAllowedOrigins,
   isAllowedBrowserOrigin,
+  isAllowedBrowserOriginFromRequest,
   isLocalSameOrigin,
 } from '../src/origin-validation.js';
 
@@ -60,7 +61,7 @@ function createOriginMiddleware(resolvedPort: number, host = '127.0.0.1') {
     }
     const ports = allowedBrowserPorts(resolvedPort);
     const extraAllowedOrigins = configuredAllowedOrigins();
-    if (!isAllowedBrowserOrigin(origin, req.headers.host, ports, host, extraAllowedOrigins)) {
+    if (!isAllowedBrowserOriginFromRequest(origin, req.headers, ports, host, extraAllowedOrigins)) {
       return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
     }
     next();
@@ -377,6 +378,86 @@ describe('daemon origin validation middleware', () => {
     });
     delete process.env.OD_WEB_PORT;
     expect(res.status).toBe(200);
+  });
+
+  it('allows public IPv4 web origins through the local Next.js proxy when bound to all interfaces', async () => {
+    const webPort = port + 1000;
+    process.env.OD_BIND_HOST = '0.0.0.0';
+    process.env.OD_WEB_PORT = String(webPort);
+    try {
+      const res = await request(port, 'POST', '/api/projects', {
+        origin: `http://13.209.4.19:${webPort}`,
+        headers: {
+          Host: `127.0.0.1:${port}`,
+          'X-Forwarded-Host': `13.209.4.19:${webPort}`,
+          'content-type': 'application/json',
+        },
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      delete process.env.OD_BIND_HOST;
+      delete process.env.OD_WEB_PORT;
+    }
+  });
+
+  it('allows local guarded routes from public IPv4 web origins through the local Next.js proxy', async () => {
+    const webPort = port + 1000;
+    process.env.OD_BIND_HOST = '0.0.0.0';
+    process.env.OD_WEB_PORT = String(webPort);
+    try {
+      const res = await request(port, 'POST', '/api/active', {
+        origin: `http://13.209.4.19:${webPort}`,
+        headers: {
+          Host: `127.0.0.1:${port}`,
+          'X-Forwarded-Host': `13.209.4.19:${webPort}`,
+          'content-type': 'application/json',
+        },
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      delete process.env.OD_BIND_HOST;
+      delete process.env.OD_WEB_PORT;
+    }
+  });
+
+  it('blocks forwarded public origins when the forwarded host does not match the Origin', async () => {
+    const webPort = port + 1000;
+    process.env.OD_BIND_HOST = '0.0.0.0';
+    process.env.OD_WEB_PORT = String(webPort);
+    try {
+      const res = await request(port, 'POST', '/api/projects', {
+        origin: `http://evil.com:${webPort}`,
+        headers: {
+          Host: `127.0.0.1:${port}`,
+          'X-Forwarded-Host': `13.209.4.19:${webPort}`,
+          'content-type': 'application/json',
+        },
+      });
+      expect(res.status).toBe(403);
+    } finally {
+      delete process.env.OD_BIND_HOST;
+      delete process.env.OD_WEB_PORT;
+    }
+  });
+
+  it('blocks forwarded domain origins unless they are explicitly allowlisted', async () => {
+    const webPort = port + 1000;
+    process.env.OD_BIND_HOST = '0.0.0.0';
+    process.env.OD_WEB_PORT = String(webPort);
+    try {
+      const res = await request(port, 'POST', '/api/projects', {
+        origin: `http://evil.com:${webPort}`,
+        headers: {
+          Host: `127.0.0.1:${port}`,
+          'X-Forwarded-Host': `evil.com:${webPort}`,
+          'content-type': 'application/json',
+        },
+      });
+      expect(res.status).toBe(403);
+    } finally {
+      delete process.env.OD_BIND_HOST;
+      delete process.env.OD_WEB_PORT;
+    }
   });
 
   it('blocks requests from unknown ports even with OD_WEB_PORT set', async () => {

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createStandaloneBackendEnv,
+  createDaemonProxyHeaders,
   createStandaloneParentMonitorImport,
   createStandaloneServerArgs,
   normalizeDaemonProxyOriginHeader,
@@ -185,5 +186,23 @@ describe('normalizeDaemonProxyOriginHeader', () => {
         webPort: 3000,
       }),
     ).toBe('null');
+  });
+});
+
+describe('createDaemonProxyHeaders', () => {
+  it('forwards the browser host to the daemon for public web origins', () => {
+    const headers = createDaemonProxyHeaders({
+      daemonOrigin: 'http://127.0.0.1:3001',
+      daemonWebPort: 3000,
+      requestHeaders: {
+        host: '13.209.4.19:3000',
+        origin: 'http://13.209.4.19:3000',
+      },
+      targetHost: '127.0.0.1:3001',
+    });
+
+    expect(headers.host).toBe('127.0.0.1:3001');
+    expect(headers.origin).toBe('http://13.209.4.19:3000');
+    expect(headers['x-forwarded-host']).toBe('13.209.4.19:3000');
   });
 });

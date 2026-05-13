@@ -576,6 +576,21 @@ If daemon/web are already running, use `restart` to switch ports in the existing
 pnpm tools-dev restart --daemon-port 17456 --web-port 17573
 ```
 
+For repeatable local binding, copy `tools-dev.config.example.json` to `tools-dev.config.json` and edit the IP/ports for your machine. `tools-dev.config.json` is local-only and is read automatically when present:
+
+```json
+{
+  "host": "0.0.0.0",
+  "bindHost": "0.0.0.0",
+  "daemonPort": 3001,
+  "webPort": 3000,
+  "allowedDevOrigins": ["13.209.4.19"],
+  "allowedOrigins": ["http://13.209.4.19:3000"]
+}
+```
+
+Use `--config <path>` to switch profiles, for example `pnpm tools-dev start web --config tools-dev.config.example.json`. CLI port flags still override config-file ports, and explicit env vars such as `OD_HOST` / `OD_BIND_HOST` override config-file host defaults.
+
 ### Desktop / Electron
 
 ```bash

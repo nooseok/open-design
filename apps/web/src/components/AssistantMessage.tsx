@@ -1,7 +1,16 @@
-import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ToolCard } from "./ToolCard";
-import { renderMarkdown } from "../runtime/markdown";
+import { renderMarkdown, type MarkdownRenderOptions } from "../runtime/markdown";
 import { projectFileUrl } from "../providers/registry";
+import { buildPath } from "../router";
 import {
   splitOnQuestionForms,
   type QuestionForm,
@@ -136,6 +145,9 @@ export function AssistantMessage({
               <ProseBlock
                 key={i}
                 text={b.text}
+                projectId={projectId}
+                projectFileNames={projectFileNames}
+                onRequestOpenFile={onRequestOpenFile}
                 isLastAssistant={!!isLast}
                 streaming={streaming}
                 nextUserContent={nextUserContent}
@@ -706,6 +718,101 @@ function humanBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function createProjectFileLinkResolver({
+  projectFileNames,
+  projectId,
+  onRequestOpenFile,
+}: {
+  projectFileNames?: Set<string>;
+  projectId: string;
+  onRequestOpenFile?: (name: string) => void;
+}): NonNullable<MarkdownRenderOptions["resolveLink"]> {
+  return (href) => {
+    const fileName = projectFilePathFromChatHref(href, projectId);
+    if (!fileName) return undefined;
+    if (projectFileNames && !projectFileNames.has(fileName)) return undefined;
+    return {
+      href: buildPath({ kind: "project", projectId, fileName }),
+      target: undefined,
+      rel: undefined,
+      onClick: onRequestOpenFile
+        ? (event) => {
+            if (!isPlainLeftClick(event)) return;
+            event.preventDefault();
+            onRequestOpenFile(fileName);
+          }
+        : undefined,
+    };
+  };
+}
+
+function projectFilePathFromChatHref(href: string, projectId: string): string | null {
+  const pathname = pathnameFromHref(href);
+  if (!pathname) return null;
+  const decodedPath = safeDecodePath(pathname).replace(/\\/g, "/");
+  const markers = [
+    `/api/projects/${projectId}/raw/`,
+    `/projects/${projectId}/files/`,
+    `/.od/projects/${projectId}/`,
+  ];
+  for (const marker of markers) {
+    const index = decodedPath.indexOf(marker);
+    if (index === -1) continue;
+    return normalizeProjectFilePath(decodedPath.slice(index + marker.length));
+  }
+  return null;
+}
+
+function pathnameFromHref(href: string): string | null {
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed, "http://open-design.local").pathname;
+  } catch {
+    return trimmed.split("#", 1)[0]?.split("?", 1)[0] ?? null;
+  }
+}
+
+function safeDecodePath(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
+function normalizeProjectFilePath(candidate: string | null): string | null {
+  if (!candidate) return null;
+  const segments = candidate
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter(Boolean);
+  if (segments.length === 0) return null;
+  if (
+    segments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        segment.startsWith(".") ||
+        segment.includes("\0"),
+    )
+  ) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+function isPlainLeftClick(event: ReactMouseEvent<HTMLAnchorElement>): boolean {
+  return (
+    event.button === 0 &&
+    !event.defaultPrevented &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.shiftKey
+  );
+}
+
 /**
  * The pre-first-block waiting indicator. Shows "Waiting for first output…"
  * normally, the latest status label (initializing / starting / thinking /
@@ -767,6 +874,9 @@ function latestStatusLabel(
 
 function ProseBlock({
   text,
+  projectId,
+  projectFileNames,
+  onRequestOpenFile,
   isLastAssistant,
   streaming,
   nextUserContent,
@@ -774,6 +884,9 @@ function ProseBlock({
   onSubmitForm,
 }: {
   text: string;
+  projectId: string | null;
+  projectFileNames?: Set<string>;
+  onRequestOpenFile?: (name: string) => void;
   isLastAssistant: boolean;
   streaming: boolean;
   nextUserContent?: string;
@@ -782,6 +895,16 @@ function ProseBlock({
 }) {
   const cleaned = useMemo(() => stripArtifact(text), [text]);
   const segments = useMemo(() => splitOnQuestionForms(cleaned), [cleaned]);
+  const markdownOptions = useMemo<MarkdownRenderOptions>(() => {
+    if (!projectId) return {};
+    return {
+      resolveLink: createProjectFileLinkResolver({
+        projectFileNames,
+        projectId,
+        onRequestOpenFile,
+      }),
+    };
+  }, [projectFileNames, projectId, onRequestOpenFile]);
   // Each text segment is further split on `<system-reminder>` blocks so
   // those render as their own collapsible chip instead of raw markup.
   const renderable = segments.flatMap(
@@ -813,7 +936,7 @@ function ProseBlock({
           return <SystemReminderBlock key={seg.key} text={seg.text} />;
         }
         if (seg.kind === "text") {
-          return <Fragment key={seg.key}>{renderMarkdown(seg.text)}</Fragment>;
+          return <Fragment key={seg.key}>{renderMarkdown(seg.text, markdownOptions)}</Fragment>;
         }
         return (
           <FormBlock

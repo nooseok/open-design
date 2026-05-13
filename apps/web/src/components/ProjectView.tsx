@@ -2291,7 +2291,29 @@ export function ProjectView({
   // shortcut wiring. Close to the JSX so the data flow is easy to
   // trace from the toolbar back to its sources.
   const handleFinalize = useCallback(() => {
+    if (config.mode === 'daemon') {
+      if (!config.agentId) {
+        setProjectActionsToast({
+          message: 'Pick a local agent first (top bar).',
+          details: null,
+          code: 'BAD_REQUEST',
+        });
+        return;
+      }
+      const choice = config.agentModels?.[config.agentId];
+      void finalize.trigger({
+        mode: 'daemon',
+        agentId: config.agentId,
+        model: choice?.model ?? null,
+        reasoning: choice?.reasoning ?? null,
+      }).then((result) => {
+        if (result) void designMdState.refresh();
+      });
+      return;
+    }
+
     void finalize.trigger({
+      mode: 'anthropic',
       apiKey: config.apiKey,
       baseUrl: config.baseUrl,
       model: config.model,
@@ -2299,7 +2321,7 @@ export function ProjectView({
     }).then((result) => {
       if (result) void designMdState.refresh();
     });
-  }, [finalize, config, designMdState]);
+  }, [finalize, config, designMdState, setProjectActionsToast]);
 
   const handleCancelFinalize = useCallback(() => {
     finalize.cancel();

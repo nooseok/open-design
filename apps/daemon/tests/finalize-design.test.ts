@@ -27,8 +27,10 @@ import {
   callAnthropicWithRetry,
   extractDesignMd,
   finalizeDesignPackage,
+  finalizeDesignPackageWithSynthesizer,
   FinalizePackageLockedError,
   FinalizeUpstreamError,
+  normalizeSynthesisDesignMd,
   resolveCurrentArtifact,
   truncateTranscriptForPrompt,
 } from '../src/finalize-design.js';
@@ -37,6 +39,7 @@ void appendVersionedApiPath;
 
 // Touch the imports so the unused-import linter stays quiet on the scaffold.
 void finalizeDesignPackage;
+void finalizeDesignPackageWithSynthesizer;
 void FinalizePackageLockedError;
 void FinalizeUpstreamError;
 
@@ -423,6 +426,14 @@ describe('extractDesignMd', () => {
   });
 });
 
+describe('normalizeSynthesisDesignMd', () => {
+  it('unwraps a single Markdown fence and trims preamble before the DESIGN.md heading', () => {
+    expect(
+      normalizeSynthesisDesignMd('done\n\n```markdown\n# DESIGN.md\n## Summary\nBody\n```\n'),
+    ).toBe('# DESIGN.md\n## Summary\nBody');
+  });
+});
+
 describe('finalizeDesignPackage (pipeline integration)', () => {
   function setupPipeline(
     opts: { designSystemId?: string | null; designSystemBody?: string | null } = {},
@@ -532,6 +543,40 @@ describe('finalizeDesignPackage (pipeline integration)', () => {
     expect(result.artifact).toBeNull(); // no artifact seeded
     expect(result.transcriptMessageCount).toBe(2);
     expect(result.designSystemId).toBe('shadcn');
+  });
+
+  it('writes DESIGN.md through a caller-provided local synthesizer', async () => {
+    const { db, projectsRoot, designSystemsRoot } = setupPipeline({
+      designSystemId: 'shadcn',
+      designSystemBody: '# shadcn\n',
+    });
+    let seenPrompt: { systemPrompt: string; userPrompt: string } | null = null;
+
+    const result = await finalizeDesignPackageWithSynthesizer(
+      db,
+      projectsRoot,
+      designSystemsRoot,
+      PROJECT_ID,
+      { now: () => new Date('2026-05-11T00:00:00.000Z') },
+      async ({ systemPrompt, userPrompt }) => {
+        seenPrompt = { systemPrompt, userPrompt };
+        return {
+          designMd: '```markdown\n# DESIGN.md\n## Summary\nLocal CLI synthesis.\n```',
+          model: 'gpt-5.4',
+          inputTokens: 11,
+          outputTokens: 22,
+        };
+      },
+    );
+
+    expect(seenPrompt?.systemPrompt).toContain('Output structure');
+    expect(seenPrompt?.userPrompt).toContain('project project-1');
+    expect(result.model).toBe('gpt-5.4');
+    expect(result.inputTokens).toBe(11);
+    expect(result.outputTokens).toBe(22);
+    expect(fs.readFileSync(result.designMdPath, 'utf8')).toBe(
+      '# DESIGN.md\n## Summary\nLocal CLI synthesis.',
+    );
   });
 
   it('emits design system "none" in the prompt when no design_system_id is set', async () => {
@@ -875,6 +920,14 @@ describe('POST /api/projects/:id/finalize/anthropic — HTTP-layer validation', 
     });
   }
 
+  function postDaemonJson(id: string, body: unknown): Promise<Response> {
+    return fetch(`${serverBaseUrl}/api/projects/${id}/finalize/daemon`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
   it('400 BAD_REQUEST when baseUrl is not a valid URL (test #13)', async () => {
     const res = await postJson('p1', {
       apiKey: 'sk-test',
@@ -924,6 +977,14 @@ describe('POST /api/projects/:id/finalize/anthropic — HTTP-layer validation', 
     const body = await res.json();
     expect(body.error.code).toBe('BAD_REQUEST');
     expect(body.error.message.toLowerCase()).toContain('project id');
+  });
+
+  it('400 BAD_REQUEST when daemon finalize is missing agentId', async () => {
+    const res = await postDaemonJson('p1', { model: 'gpt-5.4' });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe('BAD_REQUEST');
+    expect(body.error.message.toLowerCase()).toContain('agentid');
   });
 
 });

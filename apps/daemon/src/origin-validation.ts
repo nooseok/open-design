@@ -8,6 +8,7 @@ export interface RequestWithOriginHeaders {
   headers?: {
     host?: unknown;
     origin?: unknown;
+    'x-forwarded-host'?: unknown;
   };
 }
 
@@ -54,13 +55,23 @@ export function parseHostHeader(value: unknown): ParsedHostHeader | null {
   }
 }
 
-export function isPrivateIpv4(hostname: unknown): boolean {
+function parseIpv4Octets(hostname: unknown): [number, number, number, number] | null {
   const parts = String(hostname || '').split('.');
-  if (parts.length !== 4) return false;
-  if (!parts.every((part) => /^\d+$/.test(part))) return false;
+  if (parts.length !== 4) return null;
+  if (!parts.every((part) => /^\d+$/.test(part))) return null;
   const octets = parts.map((part) => Number(part));
-  if (!octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) return false;
-  const [a, b] = octets as [number, number, number, number];
+  if (!octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) return null;
+  return octets as [number, number, number, number];
+}
+
+export function isIpv4Literal(hostname: unknown): boolean {
+  return parseIpv4Octets(hostname) != null;
+}
+
+export function isPrivateIpv4(hostname: unknown): boolean {
+  const octets = parseIpv4Octets(hostname);
+  if (!octets) return false;
+  const [a, b] = octets;
   return (
     a === 10 ||
     (a === 172 && b >= 16 && b <= 31) ||
@@ -141,6 +152,36 @@ export function isAllowedBrowserOrigin(
   return isLoopbackOrPrivateLanHost(parsedOrigin.hostname);
 }
 
+export function isAllowedBrowserOriginFromRequest(
+  origin: unknown,
+  headers: RequestWithOriginHeaders['headers'],
+  ports: number[],
+  bindHost: string,
+  extraAllowedOrigins: string[],
+): boolean {
+  if (isAllowedBrowserOrigin(origin, headers?.host, ports, bindHost, extraAllowedOrigins)) {
+    return true;
+  }
+
+  const rawHost = parseHostHeader(headers?.host);
+  const forwardedHost = parseHostHeader(headers?.['x-forwarded-host']);
+  if (!rawHost || !forwardedHost) return false;
+  if (!isLoopbackOrPrivateLanHost(rawHost.hostname)) return false;
+
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(String(origin));
+  } catch {
+    return false;
+  }
+  if (parsedOrigin.protocol !== 'http:' && parsedOrigin.protocol !== 'https:') return false;
+  const originPort = parsedOrigin.port || (parsedOrigin.protocol === 'https:' ? '443' : '80');
+  if (!ports.map(String).includes(originPort)) return false;
+
+  if (parsedOrigin.host !== forwardedHost.host) return false;
+  return isIpv4Literal(parsedOrigin.hostname);
+}
+
 export function isLocalSameOrigin(
   req: RequestWithOriginHeaders,
   port: number | string | null | undefined,
@@ -154,8 +195,7 @@ export function isLocalSameOrigin(
 
   const localHostAllowed = isAllowedBrowserHost(host, ports, bindHost, []);
   if (origin == null || origin === '') return localHostAllowed;
-  if (!isAllowedBrowserHost(host, ports, bindHost, extraAllowedOrigins)) return false;
-  return isAllowedBrowserOrigin(origin, host, ports, bindHost, extraAllowedOrigins);
+  return isAllowedBrowserOriginFromRequest(origin, req.headers, ports, bindHost, extraAllowedOrigins);
 }
 
 function headerValue(value: unknown): string | undefined {

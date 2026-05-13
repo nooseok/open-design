@@ -35,7 +35,9 @@ import {
   ALL_APPS,
   DEFAULT_START_APPS,
   DEFAULT_STOP_APPS,
-  parsePortOption,
+  createConfiguredRuntimeEnv,
+  resolveConfiguredDaemonPort,
+  resolveConfiguredWebPort,
   resolveRunApps,
   resolveStartApps,
   resolveStopApps,
@@ -408,8 +410,8 @@ async function spawnDaemonRuntime(
   options: CliOptions,
   spawnOptions: { requireDesktopAuth?: boolean } = {},
 ): Promise<{ pid: number }> {
-  const daemonPort = parsePortOption(options.daemonPort, "--daemon-port");
-  const webPort = parsePortOption(options.webPort, "--web-port");
+  const daemonPort = resolveConfiguredDaemonPort(config, options);
+  const webPort = resolveConfiguredWebPort(config, options);
   const logHandle = await openAppLog(config, APP_KEYS.DAEMON);
 
   try {
@@ -429,6 +431,7 @@ async function spawnDaemonRuntime(
       appName: APP_KEYS.DAEMON,
       config,
       env: {
+        ...createConfiguredRuntimeEnv(config),
         [SIDECAR_ENV.DAEMON_PORT]: String(daemonPort ?? 0),
         ...(webPort == null ? {} : { [SIDECAR_ENV.WEB_PORT]: String(webPort) }),
         ...(options.parentPid == null ? {} : { [TOOLS_DEV_PARENT_PID_ENV]: String(options.parentPid) }),
@@ -445,7 +448,7 @@ async function spawnWebRuntime(config: ToolDevConfig, options: CliOptions): Prom
   const daemonStatus = await waitForDaemonRuntime(runtimeLookup(config));
   if (daemonStatus.url == null) throw new Error("daemon must be running before web starts");
 
-  const webPort = parsePortOption(options.webPort, "--web-port");
+  const webPort = resolveConfiguredWebPort(config, options);
   const daemonPort = urlPort(daemonStatus.url);
   const logHandle = await openAppLog(config, APP_KEYS.WEB);
 
@@ -458,6 +461,7 @@ async function spawnWebRuntime(config: ToolDevConfig, options: CliOptions): Prom
       appName: APP_KEYS.WEB,
       config,
       env: {
+        ...createConfiguredRuntimeEnv(config),
         NODE_PATH: prependNodePath([
           path.join(config.workspaceRoot, "apps/web/node_modules"),
           path.join(config.workspaceRoot, "node_modules"),
@@ -577,7 +581,7 @@ async function startDaemon(
   options: CliOptions,
   startOptions: { requireDesktopAuth?: boolean } = {},
 ) {
-  const daemonPort = parsePortOption(options.daemonPort, "--daemon-port");
+  const daemonPort = resolveConfiguredDaemonPort(config, options);
   const existing = await inspectDaemonRuntime(runtimeLookup(config));
   if (existing?.url != null && statusMatchesForcedPort(existing.url, daemonPort)) {
     return { app: APP_KEYS.DAEMON, created: false, logPath: config.apps.daemon.latestLogPath, status: existing };
@@ -615,7 +619,7 @@ async function startDaemon(
 }
 
 async function startWeb(config: ToolDevConfig, options: CliOptions) {
-  const webPort = parsePortOption(options.webPort, "--web-port");
+  const webPort = resolveConfiguredWebPort(config, options);
   const existing = await inspectWebRuntime(runtimeLookup(config));
   if (existing?.url != null && statusMatchesForcedPort(existing.url, webPort)) {
     return { app: APP_KEYS.WEB, created: false, logPath: config.apps.web.latestLogPath, status: existing };
@@ -982,6 +986,7 @@ const cli = cac("tools-dev");
 
 function addSharedOptions(command: ReturnType<typeof cli.command>) {
   return command
+    .option("--config <path>", "tools-dev config file (default: tools-dev.config.json when present)")
     .option("--namespace <name>", "runtime namespace (default: default)")
     .option("--tools-dev-root <path>", "tools-dev runtime root")
     .option("--json", "print JSON");

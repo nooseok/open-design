@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatComposer } from '../../src/components/ChatComposer';
 import { ANNOTATION_EVENT } from '../../src/components/PreviewDrawOverlay';
 import { uploadProjectFiles } from '../../src/providers/registry';
+import { patchProject } from '../../src/state/projects';
 import type { ChatAttachment, ChatCommentAttachment } from '../../src/types';
 
 vi.mock('../../src/providers/registry', async () => {
@@ -22,7 +23,12 @@ vi.mock('../../src/providers/registry', async () => {
 
 const mockedUploadProjectFiles = vi.mocked(uploadProjectFiles);
 
+vi.mock('../../src/state/projects', () => ({
+  patchProject: vi.fn(),
+}));
+
 afterEach(() => {
+  vi.mocked(patchProject).mockReset();
   cleanup();
   vi.clearAllMocks();
 });
@@ -475,6 +481,48 @@ describe('ChatComposer /search command', () => {
 
     expect(onSend).not.toHaveBeenCalled();
     expect((input as HTMLTextAreaElement).value).toBe('keep this draft');
+  });
+
+  it('links a manually entered server code folder path', async () => {
+    const onProjectMetadataChange = vi.fn();
+    vi.mocked(patchProject).mockResolvedValueOnce({
+      id: 'project-1',
+      name: 'Project',
+      skillId: null,
+      designSystemId: null,
+      createdAt: 1,
+      updatedAt: 2,
+      metadata: { kind: 'prototype', linkedDirs: ['/srv/open-design/code'] },
+    });
+
+    render(
+      <ChatComposer
+        projectId="project-1"
+        projectFiles={[]}
+        streaming={false}
+        projectMetadata={{ kind: 'prototype' }}
+        onProjectMetadataChange={onProjectMetadataChange}
+        onEnsureProject={async () => 'project-1'}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /open cli and model settings/i }));
+    fireEvent.change(screen.getByTestId('linked-folder-path-input'), {
+      target: { value: '  /srv/open-design/code  ' },
+    });
+    fireEvent.click(screen.getByTestId('linked-folder-path-submit'));
+
+    await waitFor(() => {
+      expect(patchProject).toHaveBeenCalledWith('project-1', {
+        metadata: { kind: 'prototype', linkedDirs: ['/srv/open-design/code'] },
+      });
+    });
+    expect(onProjectMetadataChange).toHaveBeenCalledWith({
+      kind: 'prototype',
+      linkedDirs: ['/srv/open-design/code'],
+    });
   });
 });
 

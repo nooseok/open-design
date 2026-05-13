@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import {
   createServer as createHttpServer,
   request as createHttpRequest,
+  type IncomingHttpHeaders,
   type IncomingMessage,
   type Server as HttpServer,
   type ServerResponse,
@@ -255,6 +256,41 @@ export function normalizeDaemonProxyOriginHeader(options: {
   return allowedWebOrigins.has(options.origin) ? options.daemonOrigin : options.origin;
 }
 
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+export function createDaemonProxyHeaders(options: {
+  daemonOrigin: string;
+  daemonWebPort?: number;
+  requestHeaders: IncomingHttpHeaders;
+  targetHost: string;
+}): IncomingHttpHeaders {
+  const headers: IncomingHttpHeaders = { ...options.requestHeaders, host: options.targetHost };
+
+  if (options.daemonWebPort == null) return headers;
+
+  delete headers["x-forwarded-host"];
+  const forwardedHost = firstHeaderValue(options.requestHeaders.host);
+  if (forwardedHost != null && forwardedHost.length > 0) {
+    headers["x-forwarded-host"] = forwardedHost;
+  }
+
+  const origin = normalizeDaemonProxyOriginHeader({
+    daemonOrigin: options.daemonOrigin,
+    origin: typeof options.requestHeaders.origin === "string" ? options.requestHeaders.origin : undefined,
+    webPort: options.daemonWebPort,
+  });
+  if (origin == null || origin.length === 0) {
+    delete headers.origin;
+  } else {
+    headers.origin = origin;
+  }
+
+  return headers;
+}
+
 async function proxyHttpRequest(
   target: URL,
   request: IncomingMessage,
@@ -262,19 +298,12 @@ async function proxyHttpRequest(
   options: { daemonWebPort?: number } = {},
 ): Promise<void> {
   const proxyRequestFactory = target.protocol === "https:" ? createHttpsRequest : createHttpRequest;
-  const headers = { ...request.headers, host: target.host };
-  if (options.daemonWebPort != null) {
-    const origin = normalizeDaemonProxyOriginHeader({
-      daemonOrigin: target.origin,
-      origin: typeof request.headers.origin === "string" ? request.headers.origin : undefined,
-      webPort: options.daemonWebPort,
-    });
-    if (origin == null || origin.length === 0) {
-      delete headers.origin;
-    } else {
-      headers.origin = origin;
-    }
-  }
+  const headers = createDaemonProxyHeaders({
+    daemonOrigin: target.origin,
+    daemonWebPort: options.daemonWebPort,
+    requestHeaders: request.headers,
+    targetHost: target.host,
+  });
 
   await new Promise<void>((resolveProxy) => {
     const proxyRequest = proxyRequestFactory(

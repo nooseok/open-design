@@ -1,5 +1,5 @@
-// Wraps POST /api/projects/:id/finalize/anthropic for the Finalize
-// design package button (#451). The daemon route runs synchronously for
+// Wraps POST /api/projects/:id/finalize/<provider> for the Finalize
+// design package button (#451). The daemon routes run synchronously for
 // 60–120 s, so the hook owns:
 //   - request lifecycle (idle / pending / success / error)
 //   - cancellation via AbortController (best-effort — daemon's
@@ -17,6 +17,7 @@ import type {
   ApiErrorCode,
   FinalizeAnthropicRequest,
   FinalizeAnthropicResponse,
+  FinalizeDaemonRequest,
 } from '@open-design/contracts';
 
 // 130 000 ms = daemon timeout (120 s) + 10 s buffer so the daemon's
@@ -24,6 +25,10 @@ import type {
 const FETCH_TIMEOUT_MS = 130_000;
 
 export type FinalizeStatus = 'idle' | 'pending' | 'success' | 'error';
+export type FinalizeProvider = 'anthropic' | 'daemon';
+export type FinalizeProjectRequest =
+  | (FinalizeAnthropicRequest & { mode?: 'anthropic' | 'api' })
+  | (FinalizeDaemonRequest & { mode: 'daemon' });
 
 export interface FinalizeError {
   code: ApiErrorCode | 'NETWORK_ERROR' | 'TIMEOUT';
@@ -35,7 +40,7 @@ export interface FinalizeProjectState {
   status: FinalizeStatus;
   error: FinalizeError | null;
   result: FinalizeAnthropicResponse | null;
-  trigger: (req: FinalizeAnthropicRequest) => Promise<FinalizeAnthropicResponse | null>;
+  trigger: (req: FinalizeProjectRequest) => Promise<FinalizeAnthropicResponse | null>;
   cancel: () => void;
 }
 
@@ -63,7 +68,7 @@ export function useFinalizeProject(projectId: string): FinalizeProjectState {
   }, []);
 
   const trigger = useCallback(
-    async (req: FinalizeAnthropicRequest): Promise<FinalizeAnthropicResponse | null> => {
+    async (req: FinalizeProjectRequest): Promise<FinalizeAnthropicResponse | null> => {
       // Cancel any in-flight call before starting a new one so a
       // double-clicked button doesn't pile up two daemon requests.
       abortRef.current?.abort();
@@ -86,17 +91,15 @@ export function useFinalizeProject(projectId: string): FinalizeProjectState {
       // setStatus('idle') while the second request is still pending,
       // clearing the spinner and re-enabling the buttons mid-flight.
       const isCurrent = () => abortRef.current === controller;
+      const provider = finalizeProvider(req);
 
       try {
-        const resp = await fetch(
-          `/api/projects/${encodeURIComponent(projectId)}/finalize/anthropic`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(req),
-            signal: controller.signal,
-          },
-        );
+        const resp = await fetch(finalizeEndpoint(projectId, req), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(finalizePayload(req)),
+          signal: controller.signal,
+        });
 
         if (!resp.ok) {
           const envelope = (await resp.json().catch(() => ({}))) as DaemonErrorEnvelope;
@@ -106,7 +109,7 @@ export function useFinalizeProject(projectId: string): FinalizeProjectState {
           const details = typeof detailsRaw === 'string' ? detailsRaw : null;
           const finalizeError: FinalizeError = {
             code: code as FinalizeError['code'],
-            message: messageForCode(code as ApiErrorCode),
+            message: messageForCode(code as ApiErrorCode, provider),
             details,
           };
           setError(finalizeError);
@@ -131,7 +134,7 @@ export function useFinalizeProject(projectId: string): FinalizeProjectState {
             // synthesis, so the message names that explicitly.
             const finalizeError: FinalizeError = {
               code: 'TIMEOUT',
-              message: messageForCode('TIMEOUT'),
+              message: messageForCode('TIMEOUT', provider),
               details: null,
             };
             setError(finalizeError);
@@ -145,7 +148,7 @@ export function useFinalizeProject(projectId: string): FinalizeProjectState {
         }
         const finalizeError: FinalizeError = {
           code: 'NETWORK_ERROR',
-          message: messageForCode('NETWORK_ERROR'),
+          message: messageForCode('NETWORK_ERROR', provider),
           details: err instanceof Error ? err.message : String(err),
         };
         setError(finalizeError);
@@ -162,21 +165,51 @@ export function useFinalizeProject(projectId: string): FinalizeProjectState {
   return { status, error, result, trigger, cancel };
 }
 
+export function finalizeProvider(req: FinalizeProjectRequest): FinalizeProvider {
+  return req.mode === 'daemon' ? 'daemon' : 'anthropic';
+}
+
+export function finalizeEndpoint(projectId: string, req: FinalizeProjectRequest): string {
+  return `/api/projects/${encodeURIComponent(projectId)}/finalize/${finalizeProvider(req)}`;
+}
+
+export function finalizePayload(req: FinalizeProjectRequest): FinalizeAnthropicRequest | FinalizeDaemonRequest {
+  if (req.mode === 'daemon') {
+    const { mode: _mode, ...payload } = req;
+    return payload;
+  }
+  const { mode: _mode, ...payload } = req;
+  return payload;
+}
+
 // User-facing toast strings for each daemon error code. The unknown /
 // network branch covers transport errors and codes the daemon adds in
 // future without crashing the UI.
-export function messageForCode(code: ApiErrorCode | 'NETWORK_ERROR' | string): string {
+export function messageForCode(
+  code: ApiErrorCode | 'NETWORK_ERROR' | string,
+  provider: FinalizeProvider = 'anthropic',
+): string {
   switch (code) {
     case 'BAD_REQUEST':
-      return 'Bad request — check the API key and model.';
+      return provider === 'daemon'
+        ? 'Bad request — check the selected local agent and model.'
+        : 'Bad request — check the API key and model.';
     case 'UNAUTHORIZED':
       return 'API key was rejected. Check it in Settings.';
     case 'FORBIDDEN':
       return 'Access denied by the upstream API.';
+    case 'AGENT_UNAVAILABLE':
+      return 'Selected local agent is unavailable. Check Settings or install the CLI.';
+    case 'AGENT_EXECUTION_FAILED':
+      return 'Selected local agent failed while finalizing. Check the daemon logs.';
+    case 'AGENT_PROMPT_TOO_LARGE':
+      return 'Finalize prompt is too large for the selected local agent.';
     case 'RATE_LIMITED':
       return 'Anthropic rate-limited the request. Try again in a minute.';
     case 'UPSTREAM_UNAVAILABLE':
-      return 'The Anthropic API is unavailable right now.';
+      return provider === 'daemon'
+        ? 'The selected local agent is unavailable right now.'
+        : 'The Anthropic API is unavailable right now.';
     case 'CONFLICT':
       return 'Another finalize is in progress for this project.';
     case 'PROJECT_NOT_FOUND':

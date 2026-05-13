@@ -75,6 +75,28 @@ export interface FinalizeOptions {
   timeoutMs?: number;
 }
 
+export interface FinalizeCommonOptions {
+  now?: () => Date;
+  signal?: AbortSignal;
+}
+
+export interface FinalizeSynthesisInput {
+  systemPrompt: string;
+  userPrompt: string;
+  signal?: AbortSignal;
+}
+
+export interface FinalizeSynthesisResult {
+  designMd: string;
+  model: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+export type FinalizeSynthesizer = (
+  input: FinalizeSynthesisInput,
+) => Promise<FinalizeSynthesisResult>;
+
 export class FinalizePackageLockedError extends Error {
   constructor(message: string) {
     super(message);
@@ -220,6 +242,101 @@ export async function finalizeDesignPackage(
   projectId: string,
   options: FinalizeOptions,
 ): Promise<FinalizeAnthropicResponse> {
+  const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+  return finalizeDesignPackageWithSynthesizer(
+    db,
+    projectsRoot,
+    designSystemsRoot,
+    projectId,
+    options,
+    async ({ systemPrompt, userPrompt, signal }) => {
+      // Anthropic call with bounded blocking timeout. The timeout
+      // controller is always created so DEFAULT_TIMEOUT_MS bounds every call,
+      // regardless of whether the caller supplied a request-abort signal.
+      // When the caller does pass a signal, both cancel paths are honored via
+      // AbortSignal.any so neither replaces the other (per @lefarcen P1 review
+      // on PR #974 round 7: passing options.signal alone disabled the timeout).
+      //
+      // Network errors (DNS, ECONNREFUSED, ECONNRESET) and JSON parse errors
+      // on the response body are rewrapped as FinalizeUpstreamError(502) so
+      // the route handler maps them to 502 UPSTREAM_FAILED rather than 500
+      // INTERNAL. Per @lefarcen P1 review on PR #832: only HTTP-non-OK
+      // responses were previously wrapped, leaving DNS/parse failures to
+      // surface as generic 500s.
+      const timeoutController = new AbortController();
+      const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+      let response: Response;
+      try {
+        const callParams: AnthropicCallParams = {
+          apiKey: options.apiKey,
+          baseUrl,
+          model: options.model,
+          maxTokens,
+          systemPrompt,
+          userPrompt,
+        };
+        callParams.signal = signal
+          ? AbortSignal.any([signal, timeoutController.signal])
+          : timeoutController.signal;
+        if (options.fetchImpl) callParams.fetchImpl = options.fetchImpl;
+        try {
+          response = await callAnthropicWithRetry(callParams);
+        } catch (err: unknown) {
+          if (err instanceof FinalizeUpstreamError) throw err;
+          const errName =
+            err && typeof err === 'object' && 'name' in err
+              ? (err as { name?: unknown }).name
+              : '';
+          if (errName === 'AbortError') throw err; // route handler maps to 503
+          // Network-level failure (TypeError from fetch, ENOTFOUND/ECONNREFUSED
+          // via cause.code, etc.) — rewrap as upstream failure so the route
+          // handler maps to 502 UPSTREAM_FAILED with redacted details.
+          const message = err instanceof Error ? err.message : String(err);
+          throw new FinalizeUpstreamError(502, '', `upstream network error: ${message}`);
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      // Extract DESIGN.md body and usage counters. A 200 with a body that
+      // isn't valid JSON (or isn't an object) is treated as an upstream
+      // failure rather than letting JSON.parse's SyntaxError surface as 500.
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new FinalizeUpstreamError(
+          502,
+          '',
+          `upstream Anthropic returned non-JSON body: ${message}`,
+        );
+      }
+      const designMd = extractDesignMd(payload);
+      const usage = (payload as { usage?: { input_tokens?: number; output_tokens?: number } }).usage ?? {};
+      const inputTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+      const outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
+      return {
+        designMd,
+        model: options.model,
+        inputTokens,
+        outputTokens,
+      };
+    },
+  );
+}
+
+export async function finalizeDesignPackageWithSynthesizer(
+  db: Db,
+  projectsRoot: string,
+  designSystemsRoot: string,
+  projectId: string,
+  options: FinalizeCommonOptions,
+  synthesize: FinalizeSynthesizer,
+): Promise<FinalizeAnthropicResponse> {
   const project = getProject(db, projectId);
   if (!project) {
     // Defensive — the route handler validates this and returns 404 before
@@ -245,8 +362,6 @@ export async function finalizeDesignPackage(
     `${OUTPUT_FILENAME}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`,
   );
   const now = options.now ?? (() => new Date());
-  const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
-  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 
   let lockFd: number | null = null;
   try {
@@ -300,73 +415,17 @@ export async function finalizeDesignPackage(
       now: now(),
     });
 
-    // Phase 7: Anthropic call with bounded blocking timeout. The timeout
-    // controller is always created so DEFAULT_TIMEOUT_MS bounds every call,
-    // regardless of whether the caller supplied a request-abort signal.
-    // When the caller does pass a signal, both cancel paths are honored via
-    // AbortSignal.any so neither replaces the other (per @lefarcen P1 review
-    // on PR #974 round 7: passing options.signal alone disabled the timeout).
-    //
-    // Network errors (DNS, ECONNREFUSED, ECONNRESET) and JSON parse errors
-    // on the response body are rewrapped as FinalizeUpstreamError(502) so
-    // the route handler maps them to 502 UPSTREAM_FAILED rather than 500
-    // INTERNAL. Per @lefarcen P1 review on PR #832: only HTTP-non-OK
-    // responses were previously wrapped, leaving DNS/parse failures to
-    // surface as generic 500s.
-    const timeoutController = new AbortController();
-    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-    let response: Response;
-    try {
-      const callParams: AnthropicCallParams = {
-        apiKey: options.apiKey,
-        baseUrl,
-        model: options.model,
-        maxTokens,
-        systemPrompt,
-        userPrompt,
-      };
-      callParams.signal = options.signal
-        ? AbortSignal.any([options.signal, timeoutController.signal])
-        : timeoutController.signal;
-      if (options.fetchImpl) callParams.fetchImpl = options.fetchImpl;
-      try {
-        response = await callAnthropicWithRetry(callParams);
-      } catch (err: unknown) {
-        if (err instanceof FinalizeUpstreamError) throw err;
-        const errName =
-          err && typeof err === 'object' && 'name' in err
-            ? (err as { name?: unknown }).name
-            : '';
-        if (errName === 'AbortError') throw err; // route handler maps to 503
-        // Network-level failure (TypeError from fetch, ENOTFOUND/ECONNREFUSED
-        // via cause.code, etc.) — rewrap as upstream failure so the route
-        // handler maps to 502 UPSTREAM_FAILED with redacted details.
-        const message = err instanceof Error ? err.message : String(err);
-        throw new FinalizeUpstreamError(502, '', `upstream network error: ${message}`);
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    // Phase 8: extract DESIGN.md body and usage counters. A 200 with a body
-    // that isn't valid JSON (or isn't an object) is treated as an upstream
-    // failure rather than letting JSON.parse's SyntaxError surface as 500.
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new FinalizeUpstreamError(
-        502,
-        '',
-        `upstream Anthropic returned non-JSON body: ${message}`,
-      );
-    }
-    const designMd = extractDesignMd(payload);
-    const usage = (payload as { usage?: { input_tokens?: number; output_tokens?: number } }).usage ?? {};
-    const inputTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
-    const outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
+    // Phase 7/8: run the selected synthesis engine. Anthropic and local
+    // CLI finalizers share the surrounding transcript/design-system/artifact
+    // prep and atomic write path; only this callback changes.
+    const synthesisInput: FinalizeSynthesisInput = { systemPrompt, userPrompt };
+    if (options.signal) synthesisInput.signal = options.signal;
+    const synthesis = await synthesize(synthesisInput);
+    const designMd = normalizeSynthesisDesignMd(synthesis.designMd);
+    const inputTokens =
+      typeof synthesis.inputTokens === 'number' ? synthesis.inputTokens : 0;
+    const outputTokens =
+      typeof synthesis.outputTokens === 'number' ? synthesis.outputTokens : 0;
 
     // Phase 9: atomic write. Mirror PR #493: writeFileSync({flag:'wx'}) →
     // reopen for fsync → rename. On any failure unlink tmp; rethrow so the
@@ -393,7 +452,7 @@ export async function finalizeDesignPackage(
     return {
       designMdPath: finalPath,
       bytesWritten: encoded.length,
-      model: options.model,
+      model: synthesis.model,
       inputTokens,
       outputTokens,
       artifact: artifact
@@ -537,6 +596,24 @@ export function extractDesignMd(payload: unknown): string {
       '',
       'upstream Anthropic response contained no text blocks',
     );
+  }
+  return out;
+}
+
+export function normalizeSynthesisDesignMd(text: unknown): string {
+  if (typeof text !== 'string') {
+    throw new FinalizeUpstreamError(502, '', 'synthesis returned a non-text DESIGN.md');
+  }
+  let out = text;
+  const trimmed = out.trim();
+  const fenced = trimmed.match(/```(?:markdown|md)?\s*\n([\s\S]*?)\n```/i);
+  if (fenced?.[1] && /^# DESIGN\.md\b/m.test(fenced[1])) {
+    out = fenced[1].trim();
+  }
+  const designHeading = out.search(/^# DESIGN\.md\b/m);
+  if (designHeading > 0) out = out.slice(designHeading).trim();
+  if (out.trim().length === 0) {
+    throw new FinalizeUpstreamError(502, '', 'synthesis returned an empty DESIGN.md');
   }
   return out;
 }

@@ -1,7 +1,7 @@
 // Shared DTOs for the `/api/projects/:id/finalize/<provider>` family of
-// synthesis endpoints. The first endpoint is `/finalize/anthropic`
-// (introduced in PR #832); future provider-namespaced siblings
-// (`/finalize/openai` etc.) can reuse the request/response shape.
+// synthesis endpoints. `/finalize/anthropic` talks directly to the
+// Anthropic Messages API; `/finalize/daemon` routes through the selected
+// local CLI agent.
 
 /**
  * Bumped when the finalize request/response shape changes incompatibly.
@@ -25,6 +25,19 @@ export interface FinalizeAnthropicRequest {
   baseUrl?: string;
   model: string;
   maxTokens?: number;
+}
+
+/**
+ * Request body for `POST /api/projects/:id/finalize/daemon`.
+ *
+ * Mirrors the local-agent chat run selection: `agentId` chooses the CLI
+ * adapter and optional `model` / `reasoning` carry the user's current
+ * per-agent model menu choice.
+ */
+export interface FinalizeDaemonRequest {
+  agentId: string;
+  model?: string | null;
+  reasoning?: string | null;
 }
 
 /**

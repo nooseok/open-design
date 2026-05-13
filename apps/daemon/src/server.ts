@@ -92,6 +92,7 @@ import { listProviderModels } from './providerModels.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
 import {
   finalizeDesignPackage,
+  finalizeDesignPackageWithSynthesizer,
   FinalizePackageLockedError,
   FinalizeUpstreamError,
 } from './finalize-design.js';
@@ -270,7 +271,7 @@ import {
 import {
   allowedBrowserPorts,
   configuredAllowedOrigins,
-  isAllowedBrowserOrigin,
+  isAllowedBrowserOriginFromRequest,
   isLocalSameOrigin,
 } from './origin-validation.js';
 
@@ -1313,6 +1314,84 @@ function sendApiError(res, status, code, message, init = {}) {
 
 const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 
+function buildDaemonFinalizePrompt(userPrompt) {
+  return [
+    'Use the following finalize inputs. Return only the final DESIGN.md Markdown body.',
+    'Do not create or modify files yourself; the daemon will write DESIGN.md after this response.',
+    '',
+    userPrompt,
+  ].join('\n');
+}
+
+function extractDaemonFinalizeText(events) {
+  let out = '';
+  for (const record of Array.isArray(events) ? events : []) {
+    const data = record?.data ?? {};
+    if (record?.event === 'stdout' && typeof data.chunk === 'string') {
+      out += data.chunk;
+      continue;
+    }
+    if (record?.event !== 'agent') continue;
+    if (data.type === 'text_delta' && typeof data.delta === 'string') {
+      out += data.delta;
+    } else if (data.type === 'text' && typeof data.text === 'string') {
+      out += data.text;
+    }
+  }
+  return out;
+}
+
+function extractDaemonFinalizeUsage(events) {
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  for (const record of Array.isArray(events) ? events : []) {
+    const data = record?.data ?? {};
+    if (record?.event !== 'agent' || data.type !== 'usage' || !data.usage) continue;
+    const u = data.usage;
+    if (typeof u.input_tokens === 'number') usage.inputTokens = u.input_tokens;
+    if (typeof u.output_tokens === 'number') usage.outputTokens = u.output_tokens;
+    if (typeof u.inputTokens === 'number') usage.inputTokens = u.inputTokens;
+    if (typeof u.outputTokens === 'number') usage.outputTokens = u.outputTokens;
+  }
+  return usage;
+}
+
+function extractDaemonFinalizeFailure(events) {
+  for (let i = Array.isArray(events) ? events.length - 1 : -1; i >= 0; i -= 1) {
+    const record = events[i];
+    if (record?.event !== 'error') continue;
+    const data = record.data ?? {};
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data.error?.message === 'string') return data.error.message;
+  }
+  return 'Local agent failed while finalizing DESIGN.md';
+}
+
+function daemonFinalizeModelLabel(agentId, requestedModel, events) {
+  const requested =
+    typeof requestedModel === 'string' && requestedModel.trim()
+      ? requestedModel.trim()
+      : null;
+  if (requested) return requested;
+  const startEvent = (Array.isArray(events) ? events : []).find((event) => event?.event === 'start');
+  const startedModel = startEvent?.data?.model;
+  if (typeof startedModel === 'string' && startedModel.trim()) return startedModel.trim();
+  return `${agentId}:default`;
+}
+
+function makeAbortError(message) {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
+function makeFinalizeAgentError(code, message, details = null) {
+  const err = new Error(message);
+  err.name = 'FinalizeAgentError';
+  err.code = code;
+  err.details = details;
+  return err;
+}
+
 export function shouldReportRunCompletedFromMessage(saved, body = {}) {
   return Boolean(
     saved &&
@@ -2235,7 +2314,7 @@ export async function startServer({
     }
 
     const ports = allowedBrowserPorts(resolvedPort);
-    if (!isAllowedBrowserOrigin(origin, req.headers.host, ports, host, extraAllowedOrigins)) {
+    if (!isAllowedBrowserOriginFromRequest(origin, req.headers, ports, host, extraAllowedOrigins)) {
       if (req.method !== 'GET' || !isPortlessLoopbackOrigin(String(origin))) {
         return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
       }
@@ -4383,6 +4462,119 @@ export async function startServer({
       child.stdin.end(composed, 'utf8');
     }
   };
+
+  app.post('/api/projects/:id/finalize/daemon', async (req, res) => {
+    const { agentId, model, reasoning } = req.body || {};
+    try {
+      if (!isSafeId(req.params.id)) {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'invalid project id');
+      }
+      if (typeof agentId !== 'string' || !agentId.trim()) {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'agentId is required');
+      }
+      if (!getAgentDef(agentId)) {
+        return sendApiError(res, 400, 'AGENT_UNAVAILABLE', `unknown agent: ${agentId}`);
+      }
+      if (model !== undefined && model !== null && (typeof model !== 'string' || !model.trim())) {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'model must be a non-empty string when provided');
+      }
+      if (
+        reasoning !== undefined &&
+        reasoning !== null &&
+        (typeof reasoning !== 'string' || !reasoning.trim())
+      ) {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'reasoning must be a non-empty string when provided');
+      }
+
+      const project = getProject(db, req.params.id);
+      if (!project) {
+        return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+      }
+
+      const finalizeAbort = new AbortController();
+      const abortFromRequest = () => {
+        if (!finalizeAbort.signal.aborted) finalizeAbort.abort();
+      };
+      res.on('close', abortFromRequest);
+
+      let result;
+      try {
+        result = await finalizeDesignPackageWithSynthesizer(
+          db,
+          PROJECTS_DIR,
+          DESIGN_SYSTEMS_DIR,
+          req.params.id,
+          { signal: finalizeAbort.signal },
+          async ({ systemPrompt, userPrompt, signal }) => {
+            const run = design.runs.create({ projectId: req.params.id, agentId });
+            const message = buildDaemonFinalizePrompt(userPrompt);
+            const runBody = {
+              agentId,
+              message,
+              systemPrompt: [
+                systemPrompt,
+                'For this finalize run, do not create or modify files yourself; return only the final DESIGN.md Markdown body.',
+              ].join('\n\n'),
+              projectId: req.params.id,
+              model: typeof model === 'string' ? model : null,
+              reasoning: typeof reasoning === 'string' ? reasoning : null,
+            };
+            const cancelRun = () => design.runs.cancel(run);
+            if (signal?.aborted) {
+              cancelRun();
+            } else {
+              signal?.addEventListener('abort', cancelRun, { once: true });
+            }
+            try {
+              design.runs.start(run, () => startChatRun(runBody, run));
+              const status = await design.runs.wait(run);
+              if (status.status === 'canceled') {
+                throw makeAbortError('local agent finalize was canceled');
+              }
+              if (status.status !== 'succeeded') {
+                throw makeFinalizeAgentError(
+                  'AGENT_EXECUTION_FAILED',
+                  extractDaemonFinalizeFailure(run.events),
+                );
+              }
+              const designMd = extractDaemonFinalizeText(run.events);
+              const usage = extractDaemonFinalizeUsage(run.events);
+              return {
+                designMd,
+                model: daemonFinalizeModelLabel(agentId, model, run.events),
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+              };
+            } finally {
+              signal?.removeEventListener('abort', cancelRun);
+            }
+          },
+        );
+      } finally {
+        res.off('close', abortFromRequest);
+      }
+      res.json(result);
+    } catch (err) {
+      if (err instanceof FinalizePackageLockedError) {
+        return sendApiError(res, 409, 'CONFLICT', err.message);
+      }
+      if (err instanceof FinalizeUpstreamError) {
+        const init = err.rawText ? { details: err.rawText } : {};
+        return sendApiError(res, 502, 'UPSTREAM_UNAVAILABLE', err.message, init);
+      }
+      const errName =
+        err && typeof err === 'object' && 'name' in err ? err.name : '';
+      if (errName === 'AbortError') {
+        return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'finalize timed out or was canceled');
+      }
+      if (errName === 'FinalizeAgentError') {
+        const init = err.details ? { details: err.details } : {};
+        return sendApiError(res, 502, err.code || 'AGENT_EXECUTION_FAILED', err.message, init);
+      }
+      console.error('[finalize/daemon]', err);
+      return sendApiError(res, 500, 'INTERNAL_ERROR', String(err?.message || err));
+    }
+  });
 
   orbitService.setRunHandler(async ({
     trigger,

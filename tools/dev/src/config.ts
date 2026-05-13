@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,12 +32,24 @@ export const DEFAULT_STOP_APPS = [APP_KEYS.DESKTOP, APP_KEYS.WEB, APP_KEYS.DAEMO
 export type ToolDevAppName = (typeof ALL_APPS)[number];
 
 export type ToolDevOptions = {
+  config?: string;
+  configFile?: string;
   daemonPort?: number | string | null;
   json?: boolean;
   namespace?: string;
   prod?: boolean;
   toolsDevRoot?: string;
   webPort?: number | string | null;
+};
+
+export type ToolDevServerConfig = {
+  allowedDevOrigins: string[];
+  allowedOrigins: string[];
+  bindHost?: string;
+  configFilePath: string | null;
+  daemonPort?: number | null;
+  host?: string;
+  webPort?: number | null;
 };
 
 export type ToolDevAppConfig = {
@@ -65,6 +78,7 @@ export type ToolDevConfig = {
   namespace: string;
   namespaceRoot: string;
   toolsDevRoot: string;
+  devServer: ToolDevServerConfig;
   tsxCliPath: string;
   workspaceRoot: string;
 };
@@ -144,7 +158,116 @@ export function parsePortOption(value: number | string | null | undefined, optio
   return parsed;
 }
 
+const DEFAULT_CONFIG_FILE_NAME = "tools-dev.config.json";
+const CONFIG_FILE_ENV = "OD_TOOLS_DEV_CONFIG";
+const HOST_PATTERN = /^[a-zA-Z0-9._\-:[\]@]+$/;
+
+function configFilePath(options: ToolDevOptions): string | null {
+  const configured = options.configFile ?? options.config ?? process.env[CONFIG_FILE_ENV];
+  if (configured != null && configured !== "") return path.resolve(WORKSPACE_ROOT, configured);
+
+  const defaultPath = path.join(WORKSPACE_ROOT, DEFAULT_CONFIG_FILE_NAME);
+  return existsSync(defaultPath) ? defaultPath : null;
+}
+
+function assertRecord(value: unknown, filePath: string): Record<string, unknown> {
+  if (value == null || Array.isArray(value) || typeof value !== "object") {
+    throw new Error(`${filePath} must contain a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function optionalHost(value: unknown, key: string, filePath: string): string | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value !== "string") throw new Error(`${filePath}.${key} must be a string`);
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (!HOST_PATTERN.test(trimmed)) throw new Error(`${filePath}.${key} contains invalid characters`);
+  return trimmed;
+}
+
+function optionalPort(value: unknown, key: string, filePath: string): number | null | undefined {
+  if (value == null || value === "") return undefined;
+  return parsePortOption(value as number | string, `${filePath}.${key}`);
+}
+
+function stringList(value: unknown, key: string, filePath: string): string[] {
+  if (value == null || value === "") return [];
+  if (typeof value === "string") {
+    return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(value)) throw new Error(`${filePath}.${key} must be a string or string array`);
+  return value.map((entry) => {
+    if (typeof entry !== "string") throw new Error(`${filePath}.${key} entries must be strings`);
+    return entry.trim();
+  }).filter(Boolean);
+}
+
+function loadServerConfig(options: ToolDevOptions): ToolDevServerConfig {
+  const filePath = configFilePath(options);
+  if (filePath == null) {
+    return { allowedDevOrigins: [], allowedOrigins: [], configFilePath: null };
+  }
+
+  if (!existsSync(filePath)) throw new Error(`tools-dev config file not found: ${filePath}`);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to read tools-dev config file ${filePath}: ${message}`);
+  }
+
+  const raw = assertRecord(parsed, filePath);
+  return {
+    allowedDevOrigins: stringList(raw.allowedDevOrigins, "allowedDevOrigins", filePath),
+    allowedOrigins: stringList(raw.allowedOrigins, "allowedOrigins", filePath),
+    bindHost: optionalHost(raw.bindHost, "bindHost", filePath),
+    configFilePath: filePath,
+    daemonPort: optionalPort(raw.daemonPort, "daemonPort", filePath),
+    host: optionalHost(raw.host, "host", filePath),
+    webPort: optionalPort(raw.webPort, "webPort", filePath),
+  };
+}
+
+export function resolveConfiguredDaemonPort(config: ToolDevConfig, options: ToolDevOptions): number | null {
+  return parsePortOption(options.daemonPort ?? config.devServer.daemonPort, "--daemon-port");
+}
+
+export function resolveConfiguredWebPort(config: ToolDevConfig, options: ToolDevOptions): number | null {
+  return parsePortOption(options.webPort ?? config.devServer.webPort, "--web-port");
+}
+
+function setIfEnvUnset(target: NodeJS.ProcessEnv, env: NodeJS.ProcessEnv, key: string, value: string | undefined): void {
+  if (value == null || env[key] != null) return;
+  target[key] = value;
+}
+
+export function createConfiguredRuntimeEnv(
+  config: ToolDevConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  setIfEnvUnset(result, env, "OD_HOST", config.devServer.host);
+  setIfEnvUnset(result, env, "OD_BIND_HOST", config.devServer.bindHost);
+  setIfEnvUnset(
+    result,
+    env,
+    "OD_ALLOWED_ORIGINS",
+    config.devServer.allowedOrigins.length > 0 ? config.devServer.allowedOrigins.join(",") : undefined,
+  );
+  setIfEnvUnset(
+    result,
+    env,
+    "OD_ALLOWED_DEV_ORIGINS",
+    config.devServer.allowedDevOrigins.length > 0 ? config.devServer.allowedDevOrigins.join(",") : undefined,
+  );
+  return result;
+}
+
 export function resolveToolDevConfig(options: ToolDevOptions = {}): ToolDevConfig {
+  const devServer = loadServerConfig(options);
   const namespace = resolveNamespace({ namespace: options.namespace, env: process.env, contract: OPEN_DESIGN_SIDECAR_CONTRACT });
   const toolsDevRoot = resolveSidecarBase({
     base: options.toolsDevRoot ?? process.env[SIDECAR_ENV.BASE] ?? resolveSourceRuntimeRoot({
@@ -189,6 +312,7 @@ export function resolveToolDevConfig(options: ToolDevOptions = {}): ToolDevConfi
     namespace,
     namespaceRoot,
     toolsDevRoot,
+    devServer,
     tsxCliPath: resolveTsxCliPath(),
     workspaceRoot: WORKSPACE_ROOT,
   };

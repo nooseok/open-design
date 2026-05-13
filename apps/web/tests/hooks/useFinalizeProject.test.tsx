@@ -4,6 +4,8 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  finalizeEndpoint,
+  finalizePayload,
   messageForCode,
   useFinalizeProject,
 } from '../../src/hooks/useFinalizeProject';
@@ -60,6 +62,47 @@ describe('useFinalizeProject', () => {
     expect((init as RequestInit).method).toBe('POST');
     expect((init as RequestInit).headers).toMatchObject({
       'Content-Type': 'application/json',
+    });
+  });
+
+  it('POSTs daemon-mode finalize requests to the local CLI endpoint', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(SUCCESS_BODY));
+    const { result } = renderHook(() => useFinalizeProject('p1'));
+    const request = {
+      mode: 'daemon' as const,
+      agentId: 'codex',
+      model: 'gpt-5.4',
+      reasoning: 'high',
+    };
+
+    await act(async () => {
+      await result.current.trigger(request);
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('/api/projects/p1/finalize/daemon');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      agentId: 'codex',
+      model: 'gpt-5.4',
+      reasoning: 'high',
+    });
+  });
+
+  it('keeps provider selection out of the serialized request payload', () => {
+    const daemonRequest = {
+      mode: 'daemon' as const,
+      agentId: 'codex',
+      model: 'gpt-5.4',
+      reasoning: 'high',
+    };
+    expect(finalizeEndpoint('project/id', daemonRequest)).toBe(
+      '/api/projects/project%2Fid/finalize/daemon',
+    );
+    expect(finalizePayload(daemonRequest)).toEqual({
+      agentId: 'codex',
+      model: 'gpt-5.4',
+      reasoning: 'high',
     });
   });
 
@@ -264,6 +307,12 @@ describe('messageForCode', () => {
   it('returns the network-error catch-all for unknown codes', () => {
     expect(messageForCode('SOME_NEW_CODE_THE_DAEMON_WILL_ADD')).toBe(
       "Couldn't reach the daemon. Make sure it's running.",
+    );
+  });
+
+  it('uses a local-agent BAD_REQUEST message for daemon finalize requests', () => {
+    expect(messageForCode('BAD_REQUEST', 'daemon')).toBe(
+      'Bad request — check the selected local agent and model.',
     );
   });
 });

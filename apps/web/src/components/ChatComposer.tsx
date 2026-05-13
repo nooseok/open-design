@@ -718,9 +718,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       if (files.length > 0) void uploadFiles(files);
     }
 
-    async function handleLinkFolder() {
+    async function handleLinkFolder(pathInput?: string) {
       if (!projectId) return;
-      const selected = await openFolderDialog();
+      const selected = typeof pathInput === 'string' ? pathInput.trim() : await openFolderDialog();
       if (!selected) return;
       const base = projectMetadata ?? { kind: 'prototype' as const };
       const existing = base.linkedDirs ?? [];
@@ -1112,9 +1112,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                     {toolsTab === 'import' ? (
                       <ToolsImportPanel
                         t={t}
-                        onLinkFolder={async () => {
-                          setToolsOpen(false);
-                          await handleLinkFolder();
+                        onLinkFolder={async (path) => {
+                          await handleLinkFolder(path);
+                          if (!path) setToolsOpen(false);
                         }}
                       />
                     ) : null}
@@ -1444,8 +1444,23 @@ function ToolsImportPanel({
   onLinkFolder,
 }: {
   t: TranslateFn;
-  onLinkFolder: () => Promise<void> | void;
+  onLinkFolder: (path?: string) => Promise<void> | void;
 }) {
+  const [serverPath, setServerPath] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submitServerPath() {
+    const path = serverPath.trim();
+    if (!path || submitting) return;
+    setSubmitting(true);
+    try {
+      await onLinkFolder(path);
+      setServerPath('');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="composer-tools-list">
       <ImportItem icon="upload" label={t('chat.importFig')} t={t} />
@@ -1457,6 +1472,32 @@ function ToolsImportPanel({
         enabled
         onClick={() => void onLinkFolder()}
       />
+      <form
+        className="composer-folder-path-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submitServerPath();
+        }}
+      >
+        <input
+          data-testid="linked-folder-path-input"
+          className="composer-folder-path-input"
+          value={serverPath}
+          onChange={(e) => setServerPath(e.target.value)}
+          placeholder="/path/to/code-folder"
+          aria-label={t('chat.importFolder')}
+        />
+        <button
+          data-testid="linked-folder-path-submit"
+          type="submit"
+          className="composer-folder-path-submit"
+          disabled={!serverPath.trim() || submitting}
+          title={t('chat.importFolder')}
+        >
+          <Icon name="folder" size={12} />
+          <span>{t('chat.importFolder')}</span>
+        </button>
+      </form>
       <ImportItem icon="sparkles" label={t('chat.importSkills')} t={t} />
       <ImportItem icon="file" label={t('chat.importProject')} t={t} />
     </div>

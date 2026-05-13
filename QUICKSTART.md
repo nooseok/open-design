@@ -204,6 +204,8 @@ pnpm typecheck                 # workspace typecheck
 
 During local development, `tools-dev` starts the daemon first, passes its port into `apps/web`, and `apps/web/next.config.ts` rewrites `/api/*`, `/artifacts/*`, and `/frames/*` to that daemon port so the App Router app can talk to the sibling Express process without CORS setup.
 
+To keep a repeatable IP/port setup, create `tools-dev.config.json` from `tools-dev.config.example.json`. The local file is read automatically; `--daemon-port` and `--web-port` still win for one-off runs, and `--config <path>` can select another profile.
+
 ## Media generation / agent dispatcher checks
 
 Image, video, audio, and HyperFrames skills call the local `od` CLI through environment variables injected by the daemon when it spawns an agent:

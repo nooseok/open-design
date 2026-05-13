@@ -11,13 +11,27 @@
  * Output is a React fragment of typed elements — no dangerouslySetInnerHTML,
  * so untrusted text can't smuggle markup through.
  */
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, type MouseEventHandler, type ReactNode } from 'react';
 
-export function renderMarkdown(input: string): ReactNode {
+export interface MarkdownLinkOverride {
+  href?: string;
+  target?: string;
+  rel?: string;
+  onClick?: MouseEventHandler<HTMLAnchorElement>;
+}
+
+export interface MarkdownRenderOptions {
+  resolveLink?: (
+    href: string,
+    context: { bare: boolean },
+  ) => MarkdownLinkOverride | null | undefined;
+}
+
+export function renderMarkdown(input: string, options: MarkdownRenderOptions = {}): ReactNode {
   const blocks = parseBlocks(input);
   return (
     <>
-      {blocks.map((b, i) => renderBlock(b, i))}
+      {blocks.map((b, i) => renderBlock(b, i, options))}
     </>
   );
 }
@@ -107,19 +121,19 @@ function parseBlocks(input: string): Block[] {
   return out;
 }
 
-function renderBlock(block: Block, key: number): ReactNode {
+function renderBlock(block: Block, key: number, options: MarkdownRenderOptions): ReactNode {
   if (block.kind === 'p') {
-    return <p key={key} className="md-p">{renderInline(block.text)}</p>;
+    return <p key={key} className="md-p">{renderInline(block.text, options)}</p>;
   }
   if (block.kind === 'h') {
     const Tag = (`h${block.level}` as 'h1' | 'h2' | 'h3' | 'h4');
-    return <Tag key={key} className={`md-h md-h${block.level}`}>{renderInline(block.text)}</Tag>;
+    return <Tag key={key} className={`md-h md-h${block.level}`}>{renderInline(block.text, options)}</Tag>;
   }
   if (block.kind === 'ul') {
     return (
       <ul key={key} className="md-ul">
         {block.items.map((item, i) => (
-          <li key={i}>{renderInline(item)}</li>
+          <li key={i}>{renderInline(item, options)}</li>
         ))}
       </ul>
     );
@@ -128,7 +142,7 @@ function renderBlock(block: Block, key: number): ReactNode {
     return (
       <ol key={key} className="md-ol">
         {block.items.map((item, i) => (
-          <li key={i}>{renderInline(item)}</li>
+          <li key={i}>{renderInline(item, options)}</li>
         ))}
       </ol>
     );
@@ -150,7 +164,7 @@ function renderBlock(block: Block, key: number): ReactNode {
 // and plain text. We walk the string with a regex that matches whichever
 // delimiter shows up next; everything between delimiters becomes a text
 // span (which itself still gets autolink scanning).
-function renderInline(text: string): ReactNode {
+function renderInline(text: string, options: MarkdownRenderOptions): ReactNode {
   const out: ReactNode[] = [];
   // Order matters:
   //  1. inline code first so its contents are not re-tokenized as bold/italic.
@@ -167,7 +181,7 @@ function renderInline(text: string): ReactNode {
   let key = 0;
   while ((m = re.exec(text))) {
     if (m.index > lastIndex) {
-      pushText(out, text.slice(lastIndex, m.index), key++);
+      pushText(out, text.slice(lastIndex, m.index), key++, options);
     }
     if (m[1]) {
       out.push(
@@ -176,13 +190,12 @@ function renderInline(text: string): ReactNode {
         </code>,
       );
     } else if (m[2] && m[3]) {
+      const props = linkProps(m[3], false, options);
       out.push(
         <a
           key={key++}
           className="md-link"
-          href={m[3]}
-          target="_blank"
-          rel="noreferrer noopener"
+          {...props}
         >
           {m[2]}
         </a>,
@@ -190,13 +203,12 @@ function renderInline(text: string): ReactNode {
     } else if (m[4]) {
       // Bare URL — autolink with the URL as both href and visible text,
       // matching the Markdown `<https://…>` autolink convention.
+      const props = linkProps(m[4], true, options);
       out.push(
         <a
           key={key++}
           className="md-link md-link-bare"
-          href={m[4]}
-          target="_blank"
-          rel="noreferrer noopener"
+          {...props}
         >
           {m[4]}
         </a>,
@@ -213,16 +225,44 @@ function renderInline(text: string): ReactNode {
     lastIndex = re.lastIndex;
   }
   if (lastIndex < text.length) {
-    pushText(out, text.slice(lastIndex), key++);
+    pushText(out, text.slice(lastIndex), key++, options);
   }
   return <Fragment>{out}</Fragment>;
+}
+
+function linkProps(
+  href: string,
+  bare: boolean,
+  options: MarkdownRenderOptions,
+): {
+  href: string;
+  target?: string | undefined;
+  rel?: string | undefined;
+  onClick?: MouseEventHandler<HTMLAnchorElement> | undefined;
+} {
+  const override = options.resolveLink?.(href, { bare }) ?? undefined;
+  return {
+    href: override?.href ?? href,
+    target: override && Object.prototype.hasOwnProperty.call(override, 'target')
+      ? override.target
+      : '_blank',
+    rel: override && Object.prototype.hasOwnProperty.call(override, 'rel')
+      ? override.rel
+      : 'noreferrer noopener',
+    onClick: override?.onClick,
+  };
 }
 
 // Walk a plain text run, autolinking bare URLs and preserving the rest as
 // text nodes. Newlines inside a paragraph become explicit <br />s — the
 // upstream parser has already left them in place because chat output
 // often relies on hard line breaks rather than blank-line separation.
-function pushText(out: ReactNode[], text: string, baseKey: number): void {
+function pushText(
+  out: ReactNode[],
+  text: string,
+  baseKey: number,
+  options: MarkdownRenderOptions,
+): void {
   if (!text) return;
   const urlRe = /(https?:\/\/[^\s)]+)/g;
   const segments: ReactNode[] = [];
@@ -233,13 +273,12 @@ function pushText(out: ReactNode[], text: string, baseKey: number): void {
     if (m.index > lastIndex) {
       segments.push(...withBreaks(text.slice(lastIndex, m.index), `${baseKey}-${k++}`));
     }
+    const props = linkProps(m[1]!, true, options);
     segments.push(
       <a
         key={`${baseKey}-${k++}`}
         className="md-link"
-        href={m[1]}
-        target="_blank"
-        rel="noreferrer noopener"
+        {...props}
       >
         {m[1]}
       </a>,
