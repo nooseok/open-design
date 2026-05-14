@@ -95,6 +95,8 @@ export const zhTW: Dict = {
   'settings.agentInstall.stepSelect': '當代理顯示為已安裝後，選擇該代理卡片。',
   'settings.noAgentsDetected':
     '尚未偵測到任何代理。請安裝 Claude Code、Codex、Gemini CLI、OpenCode、Cursor Agent 或 Qwen 其中之一，然後點擊「重新掃描」。',
+  'settings.agentAuthRequired': '需要認證',
+  'settings.agentAuthUnknown': '認證狀態未知',
   'settings.apiSection': 'API 設定',
   'settings.quickFillProvider': '快速填入提供方',
   'settings.customProvider': '自訂提供方',
@@ -916,6 +918,8 @@ export const zhTW: Dict = {
   'fileViewer.exportZip': '下載為 .zip',
   'fileViewer.exportHtml': '匯出為獨立 HTML',
   'fileViewer.exportMd': '匯出為 Markdown',
+  'fileViewer.exportImage': '匯出為圖片',
+  'fileViewer.exportImageFailed': '圖片擷取失敗，請重試或使用瀏覽器的截圖工具。',
   'fileViewer.exportJsx': '匯出為 JSX',
   'fileViewer.exportReactHtml': '匯出預覽 HTML',
   'fileViewer.saveAsTemplate': '儲存為範本…',

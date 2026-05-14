@@ -96,6 +96,8 @@ export const ru: Dict = {
   'settings.agentInstall.stepSelect': 'Выберите карточку агента, когда он появится как установленный.',
   'settings.noAgentsDetected':
     'Агенты ещё не обнаружены. Установите один из следующих инструментов: Claude Code, Codex, Devin for Terminal, Gemini CLI, OpenCode, Cursor Agent, Qwen или GitHub Copilot CLI, затем нажмите «Пересканировать».',
+  'settings.agentAuthRequired': 'Требуется аутентификация',
+  'settings.agentAuthUnknown': 'Статус аутентификации неизвестен',
   'settings.apiSection': 'Anthropic API',
   'settings.quickFillProvider': 'Быстро заполнить провайдера',
   'settings.customProvider': 'Пользовательский провайдер',
@@ -865,6 +867,8 @@ export const ru: Dict = {
   'fileViewer.exportZip': 'Скачать как .zip',
   'fileViewer.exportHtml': 'Экспорт как HTML',
   'fileViewer.exportMd': 'Экспорт в Markdown',
+  'fileViewer.exportImage': 'Экспорт как изображение',
+  'fileViewer.exportImageFailed': 'Не удалось сделать снимок. Попробуйте ещё раз или воспользуйтесь инструментом скриншотов вашего браузера.',
   'fileViewer.exportJsx': 'Экспорт как JSX',
   'fileViewer.exportReactHtml': 'Экспорт предпросмотра как HTML',
   'fileViewer.saveAsTemplate': 'Сохранить как шаблон…',

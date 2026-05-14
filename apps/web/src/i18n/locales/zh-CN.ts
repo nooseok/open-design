@@ -93,6 +93,8 @@ export const zhCN: Dict = {
   'settings.agentInstall.stepSelect': '当代理显示为已安装后，选择该代理卡片。',
   'settings.noAgentsDetected':
     '尚未检测到任何代理。请安装 Claude Code、Codex、Gemini CLI、OpenCode、Cursor Agent、Qwen 或 GitHub Copilot CLI 中的一个，然后点击「重新扫描」。',
+  'settings.agentAuthRequired': '需要认证',
+  'settings.agentAuthUnknown': '认证状态未知',
   'settings.apiSection': 'Anthropic API',
   'settings.quickFillProvider': '快速填充提供方',
   'settings.customProvider': '自定义提供方',
@@ -925,6 +927,8 @@ export const zhCN: Dict = {
   'fileViewer.exportZip': '下载为 .zip',
   'fileViewer.exportHtml': '导出为独立 HTML',
   'fileViewer.exportMd': '导出为 Markdown',
+  'fileViewer.exportImage': '导出为图片',
+  'fileViewer.exportImageFailed': '图片捕获失败，请重试或使用浏览器的截图工具。',
   'fileViewer.exportJsx': '导出为 JSX',
   'fileViewer.exportReactHtml': '导出预览 HTML',
   'fileViewer.saveAsTemplate': '保存为模板…',

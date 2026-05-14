@@ -120,6 +120,8 @@ export interface Dict {
   'settings.agentInstall.stepRescan': string;
   'settings.agentInstall.stepSelect': string;
   'settings.noAgentsDetected': string;
+  'settings.agentAuthRequired': string;
+  'settings.agentAuthUnknown': string;
   'settings.apiSection': string;
   'settings.quickFillProvider': string;
   'settings.customProvider': string;
@@ -1195,6 +1197,8 @@ export interface Dict {
   'fileViewer.exportZip': string;
   'fileViewer.exportHtml': string;
   'fileViewer.exportMd': string;
+  'fileViewer.exportImage': string;
+  'fileViewer.exportImageFailed': string;
   'fileViewer.exportJsx': string;
   'fileViewer.exportReactHtml': string;
   'fileViewer.saveAsTemplate': string;

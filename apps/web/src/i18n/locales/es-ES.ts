@@ -96,6 +96,8 @@ export const esES: Dict = {
   'settings.agentInstall.stepSelect': 'Selecciona la tarjeta del agente cuando aparezca como instalado.',
   'settings.noAgentsDetected':
     'Aún no se ha detectado ningún agente. Instala Claude Code, Codex, Devin for Terminal, Gemini CLI, OpenCode, Cursor Agent, Qwen o GitHub Copilot CLI y pulsa Reescanear.',
+  'settings.agentAuthRequired': 'Autenticación requerida',
+  'settings.agentAuthUnknown': 'Estado de autenticación desconocido',
   'settings.apiSection': 'API de Anthropic',
   'settings.quickFillProvider': 'Rellenar proveedor',
   'settings.customProvider': 'Proveedor personalizado',
@@ -731,6 +733,8 @@ export const esES: Dict = {
   'fileViewer.exportZip': 'Descargar como .zip',
   'fileViewer.exportHtml': 'Exportar como HTML independiente',
   'fileViewer.exportMd': 'Exportar como Markdown',
+  'fileViewer.exportImage': 'Exportar como imagen',
+  'fileViewer.exportImageFailed': 'Error al capturar la imagen. Inténtalo de nuevo o usa la herramienta de captura de pantalla de tu navegador.',
   'fileViewer.exportJsx': 'Exportar como JSX',
   'fileViewer.exportReactHtml': 'Exportar vista previa como HTML',
   'fileViewer.saveAsTemplate': 'Guardar como plantilla…',

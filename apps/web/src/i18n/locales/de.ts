@@ -96,6 +96,8 @@ export const de: Dict = {
   'settings.agentInstall.stepSelect': 'Waehlen Sie die Agent-Karte aus, sobald sie als installiert angezeigt wird.',
   'settings.noAgentsDetected':
     'Noch keine Agents erkannt. Installieren Sie Claude Code, Codex, Devin for Terminal, Gemini CLI, OpenCode, Cursor Agent, Qwen oder GitHub Copilot CLI und klicken Sie dann auf Neu scannen.',
+  'settings.agentAuthRequired': 'Authentifizierung erforderlich',
+  'settings.agentAuthUnknown': 'Authentifizierungsstatus unbekannt',
   'settings.apiSection': 'Anthropic API',
   'settings.quickFillProvider': 'Anbieter schnell ausfüllen',
   'settings.customProvider': 'Benutzerdefinierter Anbieter',
@@ -730,6 +732,8 @@ export const de: Dict = {
   'fileViewer.exportZip': 'Als .zip herunterladen',
   'fileViewer.exportHtml': 'Als eigenständiges HTML exportieren',
   'fileViewer.exportMd': 'Als Markdown exportieren',
+  'fileViewer.exportImage': 'Als Bild exportieren',
+  'fileViewer.exportImageFailed': 'Bildaufnahme fehlgeschlagen. Bitte versuchen Sie es erneut oder verwenden Sie das Screenshot-Tool Ihres Browsers.',
   'fileViewer.exportJsx': 'Als JSX exportieren',
   'fileViewer.exportReactHtml': 'Vorschau als HTML exportieren',
   'fileViewer.saveAsTemplate': 'Als Template speichern…',

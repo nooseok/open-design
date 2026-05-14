@@ -96,6 +96,8 @@ export const hu: Dict = {
   'settings.agentInstall.stepSelect': 'Válaszd ki az ügynök kártyáját, amint telepítettként jelenik meg.',
   'settings.noAgentsDetected':
     'Még nincs észlelt ügynök. Telepítsd a Claude Code, Codex, Devin for Terminal, Gemini CLI, OpenCode, Cursor Agent, Qwen vagy GitHub Copilot CLI valamelyikét, majd kattints az Újraellenőrzésre.',
+  'settings.agentAuthRequired': 'Hitelesítés szükséges',
+  'settings.agentAuthUnknown': 'A hitelesítési állapot ismeretlen',
   'settings.apiSection': 'Anthropic API',
   'settings.quickFillProvider': 'Szolgáltató gyors kitöltése',
   'settings.customProvider': 'Egyéni szolgáltató',
@@ -842,6 +844,8 @@ export const hu: Dict = {
   'fileViewer.exportZip': 'Letöltés .zip-ként',
   'fileViewer.exportHtml': 'Exportálás önálló HTML-ként',
   'fileViewer.exportMd': 'Exportálás Markdown-ként',
+  'fileViewer.exportImage': 'Exportálás képként',
+  'fileViewer.exportImageFailed': 'A képrögzítés sikertelen. Kérjük, próbálja újra, vagy használja a böngészője képernyőkép eszközét.',
   'fileViewer.exportJsx': 'Exportálás JSX-ként',
   'fileViewer.exportReactHtml': 'Előnézet exportálása HTML-ként',
   'fileViewer.saveAsTemplate': 'Mentés sablonként…',

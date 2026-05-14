@@ -94,6 +94,8 @@ export const en: Dict = {
   'settings.agentInstall.stepSelect': 'Select the agent card once it appears as installed.',
   'settings.noAgentsDetected':
     'No agents detected yet. Install one of Claude Code, Codex, Devin for Terminal, Gemini CLI, OpenCode, Cursor Agent, Qwen, or GitHub Copilot CLI, then click Rescan.',
+  'settings.agentAuthRequired': 'Authentication required',
+  'settings.agentAuthUnknown': 'Auth status unknown',
   'settings.apiSection': 'Anthropic API',
   'settings.quickFillProvider': 'Quick fill provider',
   'settings.customProvider': 'Custom provider',
@@ -938,6 +940,8 @@ export const en: Dict = {
   'fileViewer.exportZip': 'Download as .zip',
   'fileViewer.exportHtml': 'Export as standalone HTML',
   'fileViewer.exportMd': 'Export as Markdown',
+  'fileViewer.exportImage': 'Export as image',
+  'fileViewer.exportImageFailed': 'Image capture failed. Please try again or use your browser\'s screenshot tool.',
   'fileViewer.exportJsx': 'Export as JSX',
   'fileViewer.exportReactHtml': 'Export preview as HTML',
   'fileViewer.saveAsTemplate': 'Save as template…',

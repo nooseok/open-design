@@ -96,6 +96,8 @@ export const ko: Dict = {
   'settings.agentInstall.stepSelect': '설치됨으로 표시되면 해당 에이전트 카드를 선택하세요.',
   'settings.noAgentsDetected':
     '에이전트가 감지되지 않았습니다. Claude Code, Codex, Devin for Terminal, Gemini CLI, OpenCode, Cursor Agent, Qwen 또는 GitHub Copilot CLI 중 하나를 설치한 후 다시 스캔을 클릭하세요.',
+  'settings.agentAuthRequired': '인증 필요',
+  'settings.agentAuthUnknown': '인증 상태를 알 수 없음',
   'settings.apiSection': 'Anthropic API',
   'settings.quickFillProvider': '제공자 빠른 입력',
   'settings.customProvider': '사용자 지정 제공자',
@@ -842,6 +844,8 @@ export const ko: Dict = {
   'fileViewer.exportZip': '.zip으로 다운로드',
   'fileViewer.exportHtml': '독립 실행형 HTML로 내보내기',
   'fileViewer.exportMd': 'Markdown으로 내보내기',
+  'fileViewer.exportImage': '이미지로 내보내기',
+  'fileViewer.exportImageFailed': '이미지 캡처에 실패했습니다. 다시 시도하거나 브라우저의 스크린샷 도구를 사용하세요.',
   'fileViewer.exportJsx': 'JSX로 내보내기',
   'fileViewer.exportReactHtml': '미리보기를 HTML로 내보내기',
   'fileViewer.saveAsTemplate': '템플릿으로 저장…',
