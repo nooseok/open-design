@@ -253,7 +253,7 @@ function renderBlock(block: Block, key: number, options: MarkdownRenderOptions):
           <thead>
             <tr>
               {headers.map((cell, idx) => (
-                <th key={idx} style={cellStyle(idx)}>{renderInline(cell)}</th>
+                <th key={idx} style={cellStyle(idx)}>{renderInline(cell, options)}</th>
               ))}
             </tr>
           </thead>
@@ -261,7 +261,7 @@ function renderBlock(block: Block, key: number, options: MarkdownRenderOptions):
             {rows.map((row, rIdx) => (
               <tr key={rIdx}>
                 {headers.map((_, cIdx) => (
-                  <td key={cIdx} style={cellStyle(cIdx)}>{renderInline(row[cIdx] ?? '')}</td>
+                  <td key={cIdx} style={cellStyle(cIdx)}>{renderInline(row[cIdx] ?? '', options)}</td>
                 ))}
               </tr>
             ))}
