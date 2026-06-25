@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -575,6 +576,14 @@ export function EntryShell({
     setNewProjectOpen(true);
   }
 
+  const projectLocationsForCreate = useMemo(
+    () => [
+      { id: 'default', name: 'Open Design projects', path: '', builtIn: true },
+      ...(config.projectLocations ?? []),
+    ],
+    [config.projectLocations],
+  );
+
   function handleCreate(input: CreateInput) {
     // The NewProjectModal no longer asks the user to pick a plugin.
     // Each project kind is silently bound to its default scenario
@@ -961,6 +970,8 @@ export function EntryShell({
         templates={templates}
         {...(onDeleteTemplate ? { onDeleteTemplate } : {})}
         promptTemplates={promptTemplates}
+        projectLocations={projectLocationsForCreate}
+        defaultProjectLocationId={config.defaultProjectLocationId ?? 'default'}
         mediaProviders={config.mediaProviders}
         connectors={connectors}
         connectorsLoading={connectorsLoading}

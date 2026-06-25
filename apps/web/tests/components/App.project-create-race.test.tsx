@@ -78,6 +78,20 @@ vi.mock('../../src/components/EntryView', () => ({
         type="button"
         onClick={() =>
           onCreateProject({
+            name: 'External location project',
+            projectLocationId: 'server-work',
+            skillId: null,
+            designSystemId: null,
+            metadata: { kind: 'prototype' },
+          })
+        }
+      >
+        Create project in server location
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onCreateProject({
             name: 'Dir project',
             skillId: null,
             designSystemId: null,
@@ -563,6 +577,23 @@ describe('App project creation routing', () => {
 
     expect(screen.getByTestId('project-title').textContent).toBe('Fresh project');
     expect(window.location.pathname).toBe('/projects/project-new');
+  });
+
+  it('passes the selected server project location to project creation', async () => {
+    mockedListProjects.mockResolvedValue([]);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create project in server location' }));
+
+    await waitFor(() => {
+      expect(mockedCreateProject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'External location project',
+          projectLocationId: 'server-work',
+        }),
+      );
+    });
   });
 
   it('keeps a newly created project open when a post-create refresh resolves stale', async () => {

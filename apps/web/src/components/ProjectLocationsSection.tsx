@@ -46,6 +46,7 @@ export function ProjectLocationsSection({ cfg, setCfg, onProjectsRefresh }: Prop
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [manualPath, setManualPath] = useState('');
   const draftsRef = useRef<DraftLocation[]>(drafts);
 
   useEffect(() => {
@@ -141,7 +142,8 @@ export function ProjectLocationsSection({ cfg, setCfg, onProjectsRefresh }: Prop
   async function handleAddFolder() {
     setError(null);
     setStatus(null);
-    const selected = await openProjectLocationFolderDialog();
+    const typedPath = manualPath.trim();
+    const selected = typedPath || (await openProjectLocationFolderDialog());
     if (!selected) {
       setStatus(t('settings.projectLocationsNoFolderSelected'));
       return;
@@ -155,7 +157,10 @@ export function ProjectLocationsSection({ cfg, setCfg, onProjectsRefresh }: Prop
     setDrafts(next);
     const saved = await save(next);
     if (!saved) setDrafts(previous);
-    else await runScan();
+    else {
+      setManualPath('');
+      await runScan();
+    }
   }
 
   async function removeDraft(index: number) {
@@ -222,15 +227,25 @@ export function ProjectLocationsSection({ cfg, setCfg, onProjectsRefresh }: Prop
         ))}
       </div>
 
-      <button
-        type="button"
-        className="icon-btn project-location-add"
-        onClick={handleAddFolder}
-        disabled={loading || saving}
-      >
-        <Icon name="plus" size={12} />
-        {t('settings.projectLocationsAddFolder')}
-      </button>
+      <div className="project-location-add-row">
+        <label className="project-location-path-field">
+          <span>{t('settings.designSystemsProjectPath')}</span>
+          <input
+            value={manualPath}
+            onChange={(event) => setManualPath(event.target.value)}
+            aria-label={t('settings.designSystemsProjectPath')}
+          />
+        </label>
+        <button
+          type="button"
+          className="icon-btn project-location-add"
+          onClick={handleAddFolder}
+          disabled={loading || saving}
+        >
+          <Icon name="plus" size={12} />
+          {t('settings.projectLocationsAddFolder')}
+        </button>
+      </div>
 
       {status ? <p className="settings-rescan-status">{status}</p> : null}
       {error ? <p className="settings-rescan-status error">{error}</p> : null}

@@ -3,6 +3,7 @@ import { Dialog, DialogDescription, DialogFooter, DialogTitle } from '@open-desi
 import { createTabToTracking } from '@open-design/contracts/analytics';
 import { isOpenDesignHostAvailable, pickHostWorkingDir } from '@open-design/host';
 import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
+import type { ConnectorDetail, ProjectLocation } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackDesignSystemApplyResult,
@@ -10,7 +11,6 @@ import {
   trackNewProjectModalSurfaceView,
   trackNewProjectModalTabClick,
 } from '../analytics/events';
-import type { ConnectorDetail } from '@open-design/contracts';
 import type {
   TrackingDesignSystemApplyTargetKind,
   TrackingDesignSystemOrigin,
@@ -117,6 +117,7 @@ export type MediaSurface = 'image' | 'video' | 'audio';
 
 export interface CreateInput {
   name: string;
+  projectLocationId?: string;
   skillId: string | null;
   designSystemId: string | null;
   metadata: ProjectMetadata;
@@ -134,6 +135,8 @@ interface Props {
   templates: ProjectTemplate[];
   onDeleteTemplate?: (id: string) => Promise<boolean>;
   promptTemplates: PromptTemplateSummary[];
+  projectLocations?: ProjectLocation[];
+  defaultProjectLocationId?: string | null;
   onCreate: (input: CreateInput & { requestId?: string }) => void;
   onImportClaudeDesign?: (
     file: File,
@@ -230,6 +233,11 @@ const MEDIA_SURFACE_LABEL_KEYS: Record<MediaSurface, keyof Dict> = {
   audio: 'newproj.surfaceAudio',
 };
 
+function projectLocationLabel(location: ProjectLocation, t: TranslateFn): string {
+  if (location.builtIn || location.id === 'default') return t('newproj.locationDefault');
+  return location.name.trim() || displayFolderName(location.path);
+}
+
 export function defaultDesignSystemSelection(
   defaultDesignSystemId: string | null,
   designSystems: DesignSystemSummary[],
@@ -263,6 +271,8 @@ export function NewProjectPanel({
   templates,
   onDeleteTemplate,
   promptTemplates,
+  projectLocations,
+  defaultProjectLocationId,
   onCreate,
   onImportClaudeDesign,
   onImportFolder,
@@ -288,6 +298,34 @@ export function NewProjectPanel({
     { message: string; details?: string } | null
   >(null);
   const [tab, setTab] = useState<CreateTab>(initialTab);
+  const createProjectLocations = useMemo(
+    () => (projectLocations ?? []).filter((location) => location.id.trim()),
+    [projectLocations],
+  );
+  const [selectedProjectLocationId, setSelectedProjectLocationId] = useState<string | null>(null);
+  const effectiveProjectLocationId = useMemo(() => {
+    if (createProjectLocations.length === 0) return null;
+    const configured = selectedProjectLocationId ?? defaultProjectLocationId ?? 'default';
+    return createProjectLocations.some((location) => location.id === configured)
+      ? configured
+      : createProjectLocations[0]!.id;
+  }, [createProjectLocations, defaultProjectLocationId, selectedProjectLocationId]);
+
+  useEffect(() => {
+    if (createProjectLocations.length === 0) {
+      setSelectedProjectLocationId(null);
+      return;
+    }
+    setSelectedProjectLocationId((current) => {
+      const candidate = current ?? defaultProjectLocationId ?? 'default';
+      if (createProjectLocations.some((location) => location.id === candidate)) return current;
+      const defaultExists =
+        typeof defaultProjectLocationId === 'string' &&
+        createProjectLocations.some((location) => location.id === defaultProjectLocationId);
+      const fallback = defaultExists ? defaultProjectLocationId : createProjectLocations[0]!.id;
+      return fallback;
+    });
+  }, [createProjectLocations, defaultProjectLocationId]);
   // P0 analytics — fire surface_view once per (panel mount, tab) pair so the
   // funnel sees both initial open and tab switches without double-counting on
   // unrelated re-renders. Ref keys on a tab string because the panel is a
@@ -714,6 +752,7 @@ export function NewProjectPanel({
     );
     onCreate({
       name: trimmedName || autoName(tab, mediaSurface, t),
+      ...(effectiveProjectLocationId ? { projectLocationId: effectiveProjectLocationId } : {}),
       skillId: skillIdForTab,
       designSystemId: primaryDs,
       metadata: {
@@ -882,6 +921,24 @@ export function NewProjectPanel({
             </button>
           ) : null}
         </div>
+
+        {createProjectLocations.length > 1 ? (
+          <label className="newproj-section newproj-location-picker">
+            <span className="newproj-label">{t('settings.projectLocations')}</span>
+            <select
+              className="newproj-location-select"
+              aria-label={t('settings.projectLocations')}
+              value={effectiveProjectLocationId ?? createProjectLocations[0]!.id}
+              onChange={(event) => setSelectedProjectLocationId(event.target.value)}
+            >
+              {createProjectLocations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {projectLocationLabel(location, t)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
 
         {showDesignSystemPicker ? (
           <DesignSystemPicker

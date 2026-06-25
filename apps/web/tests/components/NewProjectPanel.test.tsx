@@ -698,6 +698,47 @@ describe('NewProjectPanel design system defaults', () => {
 });
 
 describe('NewProjectPanel working directory picker', () => {
+  it('includes the selected server project location in the create payload', () => {
+    const onCreate = vi.fn();
+
+    render(
+      <NewProjectPanel
+        skills={skills}
+        designSystems={designSystems}
+        defaultDesignSystemId="clay"
+        templates={templates}
+        onDeleteTemplate={vi.fn()}
+        promptTemplates={[]}
+        projectLocations={[
+          {
+            id: 'default',
+            name: 'Open Design projects',
+            path: '/srv/open-design/default',
+            builtIn: true,
+          },
+          {
+            id: 'server-work',
+            name: 'Server work',
+            path: '/srv/open-design/work',
+          },
+        ]}
+        defaultProjectLocationId="default"
+        onCreate={onCreate}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Project locations'), {
+      target: { value: 'server-work' },
+    });
+    fireEvent.click(screen.getByTestId('create-project'));
+
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectLocationId: 'server-work',
+      }),
+    );
+  });
+
   it('includes a browser-picked working directory in the create payload', async () => {
     const onCreate = vi.fn();
     mockedIsHostAvailable.mockReturnValue(false);
