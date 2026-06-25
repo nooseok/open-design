@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { composeSystemPrompt } from '../../src/prompts/system.js';
+import { composeSystemPrompt, resolveExclusiveSurface } from '../../src/prompts/system.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,7 +38,12 @@ const hyperframesSkillPath = path.join(
   repoRoot,
   'design-templates/hyperframes/SKILL.md',
 );
+const officialHyperframesSkillPath = path.join(
+  repoRoot,
+  'plugins/_official/examples/hyperframes/SKILL.md',
+);
 const hyperframesSkillMarkdown = readFileSync(hyperframesSkillPath, 'utf8');
+const officialHyperframesSkillMarkdown = readFileSync(officialHyperframesSkillPath, 'utf8');
 const hyperframesSkillBody = [
   `> **Skill root (absolute):** \`${hyperframesRoot}\``,
   '>',
@@ -81,6 +86,79 @@ describe('composeSystemPrompt — activeStageBlocks splice (spec §23.4)', () =>
 });
 
 describe('composeSystemPrompt', () => {
+  it('injects Chinese quick brief guidance when the UI locale is zh-CN', () => {
+    const prompt = composeSystemPrompt({ locale: 'zh-CN' });
+
+    expect(prompt).toContain('# UI locale override');
+    expect(prompt).toContain('`zh-CN` (Simplified Chinese)');
+    expect(prompt).toContain('快速简报 — 30 秒');
+    expect(prompt).toContain('目标用户');
+    expect(prompt).toContain('视觉调性');
+    expect(prompt).toContain('Keep machine-readable ids and object option `value` fields exact and unlocalized');
+  });
+
+  it('injects the converged verification policy (no mid-build screenshot looping)', () => {
+    const prompt = composeSystemPrompt({});
+
+    // Verification must read as an end-of-turn, single-pass step.
+    expect(prompt).toContain('## Verification — converge at the end, in one pass');
+    // The hard cap on rendered visual checks — the lever against codex's
+    // self-initiated 6-12x screenshot retry chains that balloon input tokens.
+    expect(prompt).toContain('One render check is the budget');
+    expect(prompt).toContain('Do not loop');
+    // Safety valve: visual verification is converged, NOT removed.
+    expect(prompt).toContain('these justify ONE rendered look');
+    // Route to the official wrapper, not a self-launched browser.
+    expect(prompt).toContain('Do NOT launch your own browser to do this');
+  });
+
+  it('preserves canonical default task-type options under locale overrides', () => {
+    const prompt = composeSystemPrompt({ locale: 'zh-CN' });
+
+    expect(prompt).toContain(
+      'keep the `taskType` option labels as the canonical routing choices',
+    );
+    for (const option of [
+      'Prototype',
+      'Live artifact',
+      'Slide deck',
+      'Image',
+      'Video',
+      'HyperFrames',
+      'Audio',
+      'Other',
+    ]) {
+      expect(prompt).toContain(`"${option}"`);
+    }
+    expect(prompt).not.toContain('option labels as `原型`');
+    expect(prompt).not.toContain('`实时作品`');
+  });
+
+  it('preserves canonical default task-type options for zh-TW locale overrides', () => {
+    const prompt = composeSystemPrompt({ locale: 'zh-TW' });
+
+    expect(prompt).toContain('# UI locale override');
+    expect(prompt).toContain('`zh-TW` (Traditional Chinese)');
+    expect(prompt).toContain(
+      'keep the `taskType` option labels as the canonical routing choices',
+    );
+    for (const option of [
+      'Prototype',
+      'Live artifact',
+      'Slide deck',
+      'Image',
+      'Video',
+      'HyperFrames',
+      'Audio',
+      'Other',
+    ]) {
+      expect(prompt).toContain(`"${option}"`);
+    }
+    expect(prompt).not.toContain('快速简报 — 30 秒');
+    expect(prompt).not.toContain('option labels as `原型`');
+    expect(prompt).not.toContain('`实时作品`');
+  });
+
   it('treats an active design system as the visual direction', () => {
     const prompt = composeSystemPrompt({
       designSystemTitle: 'ComfyUI',
@@ -173,6 +251,21 @@ describe('composeSystemPrompt', () => {
     expect(prompt).toContain('## Active skill — hyperframes');
     expect(prompt).toContain('**Pre-flight (do this before any other tool):**');
     expect(prompt).toContain('`references/html-in-canvas.md`');
+    expect(prompt).toContain('media generate --surface video --model hyperframes-html --composition-dir <rel>');
+    expect(prompt).toContain('Do not run `npx hyperframes render` yourself');
+    expect(prompt).not.toContain('intentionally rejected for this model');
+    expect(prompt).not.toContain('AGENT_RENDERED');
+    expect(prompt).not.toContain('rendered by you directly via npx');
+  });
+
+  it('keeps both hyperframes skill copies aligned with the daemon render handoff', () => {
+    for (const markdown of [hyperframesSkillMarkdown, officialHyperframesSkillMarkdown]) {
+      expect(markdown).toContain('media generate --surface video --model hyperframes-html --composition-dir <rel>');
+      expect(markdown).toContain('Do not run `npx hyperframes render`');
+      expect(markdown).not.toContain('AGENT_RENDERED');
+      expect(markdown).not.toContain('rendered by you directly via npx');
+      expect(markdown).not.toContain('dispatcher path returns a 400');
+    }
   });
 
   it('does not add the responsive web contract to deck metadata without platform fields', () => {
@@ -180,12 +273,51 @@ describe('composeSystemPrompt', () => {
       metadata: {
         kind: 'deck',
         speakerNotes: true,
+        slideCount: '10-15 pages',
       } as any,
     });
 
     expect(prompt).toContain('- **kind**: deck');
+    expect(prompt).toContain('- **slideCount**: 10-15 pages');
     expect(prompt).not.toContain('**responsive web contract**');
     expect(prompt).not.toContain('**platformTargets**');
+  });
+
+  it('tells artifact generation to summarize instead of dumping raw HTML source into chat', () => {
+    const prompt = composeSystemPrompt({
+      metadata: { kind: 'prototype', fidelity: 'production' } as any,
+    });
+
+    expect(prompt).toContain('Do not dump the full raw HTML source back into chat');
+    expect(prompt).toContain('the assistant message should only summarize the result');
+  });
+
+  it('uses the primary skill surface when composed skill modes conflict', () => {
+    const prompt = composeSystemPrompt({
+      skillMode: 'image',
+      skillModes: ['deck', 'image'],
+    });
+
+    expect(prompt).toContain('## Media generation contract');
+    expect(prompt).not.toContain('# Slide deck — fixed framework');
+  });
+
+  it('lets metadata.kind win over conflicting composed skill modes', () => {
+    const prompt = composeSystemPrompt({
+      skillMode: 'image',
+      skillModes: ['deck', 'image'],
+      metadata: { kind: 'deck' } as any,
+    });
+
+    expect(prompt).toContain('# Slide deck — fixed framework');
+    expect(prompt).not.toContain('## Media generation contract');
+  });
+
+  it('resolves a non-media primary surface ahead of composed media mentions', () => {
+    expect(resolveExclusiveSurface({
+      skillMode: 'deck',
+      skillModes: ['deck', 'image'],
+    })).toBe('deck');
   });
 
   describe('artifact handoff no-emit clauses (#1143)', () => {
@@ -199,16 +331,48 @@ describe('composeSystemPrompt', () => {
       expect(prompt).toContain('When NOT to emit `<artifact>`');
     });
 
+    it('pins filesystem artifact handoff for AMR runs', () => {
+      const prompt = composeSystemPrompt({ agentId: 'amr' });
+      expect(prompt).toContain('## Filesystem handoff');
+      expect(prompt).toContain('filesystem execution profile');
+      expect(prompt).toContain("runtime's native tool-call interface");
+      expect(prompt).toContain('Never type a tool invocation into assistant text');
+      expect(prompt).toContain('This tool-call rule does not apply to Open Design UI markup');
+      expect(prompt).toContain('emit the complete `<question-form>...</question-form>` block directly');
+      expect(prompt).toContain('Do not output generated source code in a `<artifact type="text/html">...</artifact>` block.');
+    });
+
+    it('prioritizes question forms over native tool calls when clarifying', () => {
+      const prompt = composeSystemPrompt({ agentId: 'amr' });
+      expect(prompt).toContain('## Clarifying questions mid-conversation');
+      expect(prompt).toContain('`<question-form>` is assistant text for the Open Design UI, not a native tool call');
+      expect(prompt).toContain(
+        'emit the complete `<question-form>...</question-form>` block directly in the assistant message before any TodoWrite, file write/edit, Bash, or other native tool call',
+      );
+      expect(prompt).toContain('Do not stop after an introductory sentence such as "先确认一下方向："');
+    });
+
+    it('pins filesystem artifact handoff for other CLI agents too', () => {
+      const prompt = composeSystemPrompt({ agentId: 'gemini' });
+      expect(prompt).toContain('## Filesystem handoff');
+      expect(prompt).toContain("runtime's native tool-call interface");
+    });
+
+    it('does not pin filesystem artifact handoff in plain API mode', () => {
+      const prompt = composeSystemPrompt({ agentId: 'deepseek', streamFormat: 'plain' });
+      expect(prompt).not.toContain('## Filesystem handoff');
+    });
+
     it('forbids wrapping in-place-edit-only turns in an artifact block', () => {
       const prompt = composeSystemPrompt({});
-      expect(prompt).toMatch(/in-place|Edit-only|already-existing/i);
-      expect(prompt).toMatch(/do not (emit|wrap|send) (a |an )?`?<artifact/i);
+      expect(prompt).toMatch(/filesystem runs/i);
+      expect(prompt).toMatch(/Do not emit a source-code `<artifact>` block/i);
     });
 
     it('forbids putting prose / summaries / paths inside an artifact block', () => {
       const prompt = composeSystemPrompt({});
-      expect(prompt).toMatch(/complete `?<!doctype html>`?/i);
       expect(prompt).toMatch(/summar(y|ies)|prose|file path/i);
+      expect(prompt).toContain('Never wrap a summary, prose, file path reference, bash output, explanation, or full source file inside `<artifact>`.');
     });
 
     it('does not carry unconditional "Emit single <artifact>" / "emit a single <artifact>" lines anywhere in the composed prompt', () => {
@@ -222,13 +386,12 @@ describe('composeSystemPrompt', () => {
       expect(prompt).not.toMatch(/^7\.\s+Emit single <artifact>\s*$/m);
     });
 
-    it('declares artifact-emission conditionality at the dominant discovery layer', () => {
+    it('declares filesystem file handoff at the dominant discovery layer', () => {
       const prompt = composeSystemPrompt({});
-      // The base prompt's "When NOT to emit" section is at lower precedence than
-      // DISCOVERY_AND_PHILOSOPHY, so the exception itself must be stated once at
-      // the dominant layer (near RULE 3) — not only back-pointed.
-      expect(prompt).toMatch(/only when this turn wrote a new canonical HTML/i);
-      expect(prompt).toMatch(/only edited an existing HTML file/i);
+      // The base prompt is lower precedence than DISCOVERY_AND_PHILOSOPHY, so
+      // filesystem handoff must be stated at the dominant layer too.
+      expect(prompt).toMatch(/Filesystem handoff is canonical/i);
+      expect(prompt).toMatch(/Do not emit a source-code `<artifact>` block/i);
     });
 
     it('also keeps deck-mode prompts free of the unconditional emit line (DECK_FRAMEWORK_DIRECTIVE only stacks for deck projects)', () => {
@@ -240,7 +403,7 @@ describe('composeSystemPrompt', () => {
       // path explicitly here.
       const deckPrompt = composeSystemPrompt({ skillMode: 'deck' });
       expect(deckPrompt).not.toMatch(/^7\.\s+Emit single <artifact>\s*$/m);
-      expect(deckPrompt).toMatch(/Emit single <artifact> if a new canonical deck HTML/i);
+      expect(deckPrompt).toMatch(/Summarize the written or changed deck file/i);
     });
   });
 
@@ -292,6 +455,19 @@ describe('composeSystemPrompt', () => {
       expect(prompt).toContain('- `github`\n');
       expect(prompt).not.toContain('- `github` (github)');
     });
+
+    it('keeps external MCP tools visible when OD-owned media execution is disabled', () => {
+      const prompt = composeSystemPrompt({
+        connectedExternalMcp: [{ id: 'external-media', label: 'External media' }],
+        metadata: { kind: 'image' },
+        mediaExecution: { mode: 'disabled' },
+      });
+
+      expect(prompt).toContain('## External MCP servers — already authenticated');
+      expect(prompt).toContain('`external-media`');
+      expect(prompt).toContain('Open Design-owned media execution is **disabled for this run**');
+      expect(prompt).not.toContain('## Media generation contract');
+    });
   });
 
   // The daemon experiment for compiling a brand's design system from prose
@@ -323,6 +499,31 @@ describe('composeSystemPrompt', () => {
       expect(prompt).toContain('## Reference fixture — default');
       expect(prompt).toContain('Match its component shapes');
       expect(prompt).toContain('class="btn btn-primary"');
+    });
+
+    it('places USAGE.md before DESIGN.md so it acts as the package router', () => {
+      const prompt = composeSystemPrompt({
+        designSystemTitle: 'default',
+        designSystemBody: 'PROSE_BODY_MARKER',
+        designSystemUsageMd: 'Read Order: inspect the manifest cache before source evidence.',
+      });
+
+      const usageAt = prompt.indexOf('## How to use this design system — default');
+      const proseAt = prompt.indexOf('## Active design system — default');
+      expect(usageAt).toBeGreaterThan(0);
+      expect(proseAt).toBeGreaterThan(usageAt);
+      expect(prompt).toContain('Read Order: inspect the manifest cache before source evidence.');
+    });
+
+    it('injects a small default usage router for legacy brands with no USAGE.md', () => {
+      const prompt = composeSystemPrompt({
+        designSystemTitle: 'legacy',
+        designSystemBody: '# Legacy\n\nProse description.',
+      });
+
+      expect(prompt).toContain('## How to use this design system — legacy');
+      expect(prompt).toContain('Read DESIGN.md for visual principles');
+      expect(prompt).toContain('do not assume those files have already been loaded');
     });
 
     it('prefers the component manifest over the full fixture when both are present', () => {
@@ -384,6 +585,32 @@ describe('composeSystemPrompt', () => {
       });
       expect(manifestOnly).not.toContain('## Active design system tokens');
       expect(manifestOnly).toContain('## Reference component manifest — default');
+    });
+
+    it('adds the pull-layer index without loading pull-layer file contents', () => {
+      const prompt = composeSystemPrompt({
+        designSystemTitle: 'default',
+        designSystemBody: '# x\n\nbody',
+        designSystemPullIndex:
+          'Additional design-system files declared by manifest.json:\n- preview/colors.html: Colors; colors\n- source/evidence.md: import evidence notes',
+      });
+
+      expect(prompt).toContain('## Pull-layer files available on demand — default');
+      expect(prompt).toContain('preview/colors.html: Colors; colors');
+      expect(prompt).toContain('source/evidence.md: import evidence notes');
+      expect(prompt).toContain('Keep the push prompt light');
+    });
+
+    it('adds importMode guidance when the manifest declares consumption semantics', () => {
+      const prompt = composeSystemPrompt({
+        designSystemTitle: 'source-heavy',
+        designSystemBody: '# x\n\nbody',
+        designSystemImportMode: 'verbatim',
+      });
+
+      expect(prompt).toContain('## Design system import mode — source-heavy');
+      expect(prompt).toContain('Preserve source semantics and source naming');
+      expect(prompt).toContain('pull-layer source evidence or snippets');
     });
 
     it('places the tokens + component manifest blocks AFTER the DESIGN.md prose block (prose sets voice, structured form binds names)', () => {

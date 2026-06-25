@@ -12,13 +12,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { PluginInputsForm } from '../../src/components/PluginInputsForm';
+import { I18nProvider } from '../../src/i18n';
 
-let onChange: ReturnType<typeof vi.fn>;
-let onValidityChange: ReturnType<typeof vi.fn>;
+type OnChange = (values: Record<string, unknown>) => void;
+type OnValidityChange = (valid: boolean) => void;
+
+let onChange: ReturnType<typeof vi.fn<OnChange>>;
+let onValidityChange: ReturnType<typeof vi.fn<OnValidityChange>>;
 
 beforeEach(() => {
-  onChange = vi.fn();
-  onValidityChange = vi.fn();
+  onChange = vi.fn<OnChange>();
+  onValidityChange = vi.fn<OnValidityChange>();
 });
 
 afterEach(() => cleanup());
@@ -117,6 +121,38 @@ describe('PluginInputsForm', () => {
     fireEvent.change(select, { target: { value: 'music' } });
 
     expect(onChange).toHaveBeenCalledWith({ audioType: 'music' });
+  });
+
+  it('localizes optionLabels-backed select labels in Simplified Chinese', () => {
+    render(
+      <I18nProvider initial="zh-CN">
+        <PluginInputsForm
+          fields={[
+            {
+              name: 'audioType',
+              label: 'Audio type',
+              type: 'select',
+              options: ['speech', 'sfx'],
+              optionLabels: { speech: 'Speech', sfx: 'Sound effect' },
+            },
+          ]}
+          values={{ audioType: 'speech' }}
+          onChange={onChange}
+          onValidityChange={onValidityChange}
+        />
+      </I18nProvider>,
+    );
+    const select = screen.getByLabelText('音频类型') as HTMLSelectElement;
+
+    expect(select.value).toBe('speech');
+    expect(screen.getByText('语音')).toBeTruthy();
+    expect(screen.getByText('音效')).toBeTruthy();
+    expect(screen.queryByText('Speech')).toBeNull();
+    expect(screen.queryByText('Sound effect')).toBeNull();
+
+    fireEvent.change(select, { target: { value: 'sfx' } });
+
+    expect(onChange).toHaveBeenCalledWith({ audioType: 'sfx' });
   });
 
   it('renders file inputs as upload slots with serializable metadata', () => {

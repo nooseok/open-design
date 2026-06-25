@@ -7,11 +7,34 @@
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
 
+const localizedContentSchema = z
+  .record(
+    z.string(),
+    z
+      .object({
+        name: z.string().optional(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        summary: z.string().optional(),
+        category: z.string().optional(),
+        tagline: z.string().optional(),
+        atmosphere: z.string().optional(),
+        body: z.string().optional(),
+        bodyHtml: z.string().optional(),
+        triggers: z.array(z.string()).optional(),
+        examplePrompt: z.string().optional(),
+        example_prompt: z.string().optional(),
+      })
+      .passthrough(),
+  )
+  .optional();
+
 const skillSchema = z
   .object({
     name: z.string().optional(),
     description: z.string().optional(),
     triggers: z.array(z.string()).optional(),
+    i18n: localizedContentSchema,
     od: z
       .object({
         mode: z.string().optional(),
@@ -36,16 +59,30 @@ const skills = defineCollection({
   schema: skillSchema,
 });
 
+const designTemplates = defineCollection({
+  loader: glob({
+    base: '../../design-templates',
+    pattern: '*/SKILL.md',
+  }),
+  schema: skillSchema,
+});
+
 // `design-systems/<slug>/DESIGN.md` files use plain Markdown without YAML
 // frontmatter. We treat them as untyped Markdown bundles and parse the
 // human-meaningful fields (H1, `> Category:`, palette hex codes) at
 // page-render time.
 const systems = defineCollection({
+  // `DESIGN.md` is the English source; `DESIGN.<locale>.md` (e.g.
+  // `DESIGN.zh.md`) are optional localized bodies for a curated subset of
+  // popular brands. The catalog reads only the English entries (so cards
+  // aren't duplicated); the detail page prefers the locale entry and falls
+  // back to English. Astro strips the final `.md`, so ids are `<slug>/DESIGN`
+  // or `<slug>/DESIGN.<locale>`.
   loader: glob({
     base: '../../design-systems',
-    pattern: '*/DESIGN.md',
+    pattern: '*/DESIGN*.md',
   }),
-  schema: z.object({}).passthrough(),
+  schema: z.object({ i18n: localizedContentSchema }).passthrough(),
 });
 
 const craft = defineCollection({
@@ -53,18 +90,19 @@ const craft = defineCollection({
     base: '../../craft',
     pattern: '*.md',
   }),
-  schema: z.object({}).passthrough(),
+  schema: z.object({ i18n: localizedContentSchema }).passthrough(),
 });
 
-// `templates/live-artifacts/<slug>/README.md` — Live Artifact bundles.
-// We surface them under `/templates/` together with skills whose `od.mode`
-// is `template` (filtered at render time, not in the schema).
+// `templates/live-artifacts/<slug>/README.md` — legacy Live Artifact bundles.
+// The public `/templates/` catalog is primarily sourced from
+// `design-templates/*/SKILL.md`; these remain available as compatibility
+// records while older live-artifact bundles still exist in the repo.
 const templates = defineCollection({
   loader: glob({
     base: '../../templates/live-artifacts',
     pattern: '*/README.md',
   }),
-  schema: z.object({}).passthrough(),
+  schema: z.object({ i18n: localizedContentSchema }).passthrough(),
 });
 
 // Blog posts live in `app/content/blog/*.md`. Each post must declare a typed
@@ -78,13 +116,51 @@ const blog = defineCollection({
     pattern: ['*.md', '!_*.md'],
     base: './app/content/blog',
   }),
+  schema: z
+    .object({
+      title: z.string(),
+      date: z.coerce.date(),
+      category: z.enum(['Product', 'Guides', 'Use cases', 'Community']),
+      readingTime: z.number().int().positive(),
+      summary: z.string(),
+      author: z.string().optional(),
+      i18n: z
+        .record(
+          z.string(),
+          z
+            .object({
+              title: z.string().optional(),
+              summary: z.string().optional(),
+              category: z.string().optional(),
+              body: z.string().optional(),
+              bodyHtml: z.string().optional(),
+            })
+            .passthrough(),
+        )
+        .optional(),
+    })
+    .passthrough(),
+});
+
+// Tutorials live in `app/content/tutorials/*.md`. Each entry maps to a
+// single YouTube video and renders a click-through preview on
+// `/tutorials/<slug>/`.
+const tutorials = defineCollection({
+  loader: glob({
+    pattern: ['*.md', '!_*.md'],
+    base: './app/content/tutorials',
+  }),
   schema: z.object({
     title: z.string(),
-    date: z.coerce.date(),
-    category: z.enum(['Product', 'Guides', 'Use cases', 'Community']),
-    readingTime: z.number().int().positive(),
+    youtubeId: z.string().regex(/^[\w-]{11}$/, 'youtubeId must be 11 chars'),
     summary: z.string(),
+    date: z.coerce.date(),
+    category: z.enum(['Getting started', 'Tutorial', 'Demo', 'Review', 'Community']),
+    durationSeconds: z.number().int().positive(),
+    author: z.string(),
+    official: z.boolean().default(false),
+    thumbnail: z.string().url().optional(),
   }),
 });
 
-export const collections = { skills, systems, craft, templates, blog };
+export const collections = { skills, designTemplates, systems, craft, templates, blog, tutorials };

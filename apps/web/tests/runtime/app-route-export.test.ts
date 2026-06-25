@@ -1,25 +1,45 @@
-import { describe, expect, it } from 'vitest';
-import nextConfig, { resolveAllowedDevOrigins } from '../../next.config';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as spaShellRoute from '../../app/[[...slug]]/page';
 
+const WEB_ROOT = dirname(fileURLToPath(new URL('../../..', import.meta.url)));
+
+async function loadNextConfig() {
+  vi.resetModules();
+  return (await import('../../next.config')).default;
+}
+
+afterEach(() => {
+  delete process.env.OD_WEB_DIST_DIR;
+  vi.resetModules();
+});
+
 describe('SPA shell export route', () => {
-  it('stays compatible with static export builds', () => {
+  it('stays compatible with static export builds', async () => {
+    const nextConfig = await loadNextConfig();
     expect(nextConfig.output).toBe('export');
+    expect(nextConfig.distDir).toBeUndefined();
     expect('dynamicParams' in spaShellRoute).toBe(false);
     expect(spaShellRoute.generateStaticParams()).toEqual([{ slug: [] }]);
   });
-});
 
-describe('Next.js dev origins', () => {
-  it('allows IPv4 browser origins when the web sidecar binds to all interfaces', () => {
-    expect(resolveAllowedDevOrigins({ OD_HOST: '0.0.0.0' })).toContain('*.*.*.*');
+  it('keeps an explicit dist dir override even when static export is selected', async () => {
+    const configuredDistDir = resolve(WEB_ROOT, '.tmp', 'vitest-next');
+    process.env.OD_WEB_DIST_DIR = configuredDistDir;
+
+    const nextConfig = await loadNextConfig();
+
+    expect(nextConfig.output).toBe('export');
+    expect(nextConfig.distDir).toContain('vitest-next');
   });
 
-  it('allows explicit extra dev origins from env', () => {
-    expect(
-      resolveAllowedDevOrigins({
-        OD_ALLOWED_DEV_ORIGINS: '13.209.4.19, preview.example.com ',
-      }),
-    ).toEqual(['127.0.0.1', '13.209.4.19', 'preview.example.com']);
+  it('treats an empty dist dir override as unset for static export builds', async () => {
+    process.env.OD_WEB_DIST_DIR = '';
+
+    const nextConfig = await loadNextConfig();
+
+    expect(nextConfig.output).toBe('export');
+    expect(nextConfig.distDir).toBeUndefined();
   });
 });

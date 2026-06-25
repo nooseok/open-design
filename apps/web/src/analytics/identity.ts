@@ -5,9 +5,11 @@
 // headers (see @open-design/contracts/analytics).
 
 import type { AnalyticsClientType } from '@open-design/contracts/analytics';
+import { detectOpenDesignHostClientType } from '@open-design/host';
 
 const ANONYMOUS_ID_KEY = 'open-design:analytics.anonymous_id';
 const SESSION_ID_KEY = 'open-design:analytics.session_id';
+const RUN_TURN_INDEX_KEY = 'open-design:analytics.run_turn_index';
 
 function randomUuid(): string {
   // Prefer the standard crypto.randomUUID — present in every modern browser
@@ -52,18 +54,32 @@ export function getSessionId(): string {
   }
 }
 
-// Desktop packaged builds set this marker on window in a preload script so
-// the same web bundle can distinguish desktop runs from browser visits.
-// Falls back to 'web' when the marker isn't present.
+// Claim the next 0-based run turn index for the current browser analytics
+// session and advance the counter. Lives in sessionStorage so it shares the
+// exact lifetime of the `session_id` above — both reset together when the tab
+// session ends. Call this once per run that is actually being created (at the
+// create-run dispatch), so `run_created`/`run_finished` can sequence a
+// session's runs. Returns null when storage is unavailable (SSR / privacy
+// mode), so callers omit the hint rather than reporting a misleading turn 0.
+export function claimRunTurnIndex(): { turnIndex: number; isFirstRun: boolean } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(RUN_TURN_INDEX_KEY);
+    const current = raw ? Number.parseInt(raw, 10) : 0;
+    const turnIndex = Number.isFinite(current) && current >= 0 ? current : 0;
+    window.sessionStorage.setItem(RUN_TURN_INDEX_KEY, String(turnIndex + 1));
+    return { turnIndex, isFirstRun: turnIndex === 0 };
+  } catch {
+    return null;
+  }
+}
+
+// Desktop packaged builds install the Open Design host bridge so the
+// same web bundle can distinguish desktop runs from browser visits.
+// Falls back to 'web' when the host bridge isn't present.
 export function detectClientType(): AnalyticsClientType {
   if (typeof window === 'undefined') return 'web';
-  const w = window as Window & {
-    __OD_CLIENT_TYPE__?: AnalyticsClientType;
-    electronAPI?: unknown;
-  };
-  if (w.__OD_CLIENT_TYPE__ === 'desktop') return 'desktop';
-  if (w.electronAPI) return 'desktop';
-  return 'web';
+  return detectOpenDesignHostClientType();
 }
 
 // Read the launch_source for app_launch. Best-effort: PerformanceNavigation

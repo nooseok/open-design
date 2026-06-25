@@ -1,9 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import type {
-  ConnectorDetail,
-  ConnectorStatusResponse,
-  ImportFolderResponse,
-} from '@open-design/contracts';
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import type { ConnectorDetail } from '@open-design/contracts';
+import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
 import {
   DEFAULT_AUDIO_MODEL,
   DEFAULT_IMAGE_MODEL,
@@ -21,6 +18,7 @@ import type {
   ProjectMetadata,
   ProjectTemplate,
   PromptTemplateSummary,
+  ProviderModelOption,
   SkillSummary,
 } from '../types';
 // `EntryShell` owns the redesigned home layout (left rail + centered
@@ -29,11 +27,12 @@ import type {
 // connector lifecycle, exported helpers) stay close to a no-op here.
 import { EntryShell } from './EntryShell';
 import type { IntegrationTab } from './IntegrationsView';
-import type { CreateInput } from './NewProjectPanel';
+import type { CreateInput, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import {
-  fetchConnectors,
-  fetchConnectorStatuses,
-} from '../providers/registry';
+  CONNECTOR_CALLBACK_MESSAGE_TYPE,
+  listenForConnectorsChanged,
+} from './connectors-events';
+import { fetchConnectorCatalogSnapshot } from './connectors-state';
 import type {
   PluginShareAction,
   PluginShareProjectOutcome,
@@ -55,10 +54,15 @@ interface Props {
   promptTemplates: PromptTemplateSummary[];
   defaultDesignSystemId: string | null;
   agents: AgentInfo[];
+  // Forwarded to EntryShell → OnboardingView so the AMR cloud card can show a
+  // detecting/skeleton state while the cold-start agent stream is in flight.
+  agentsLoading?: boolean;
   // Execution / model-switching context forwarded to the EntryShell so the
   // sticky top-bar can expose the active CLI/BYOK + model and persist
   // changes through the same channels as the project view.
   config: AppConfig;
+  providerModelsCache?: Record<string, ProviderModelOption[]>;
+  onProviderModelsCacheChange?: Dispatch<SetStateAction<Record<string, ProviderModelOption[]>>>;
   integrationInitialTab?: IntegrationTab;
   composioConfigLoading?: boolean;
   daemonLive: boolean;
@@ -70,6 +74,8 @@ interface Props {
   ) => void;
   onApiProtocolChange: (protocol: ApiProtocol) => void;
   onApiModelChange: (model: string) => void;
+  onConfigPersist: (cfg: AppConfig) => Promise<void> | void;
+  onRefreshAgents: () => Promise<AgentInfo[]> | AgentInfo[];
   // Quick theme switch invoked from the avatar-popover dropdown so the
   // user can flip light/dark/system without opening the full Settings
   // dialog. Persistence happens in `App`; this component just forwards.
@@ -92,25 +98,30 @@ interface Props {
       autoSendFirstMessage?: boolean;
       pendingFiles?: File[];
     },
-  ) => void;
+  ) => Promise<boolean> | boolean | void;
   onCreatePluginShareProject: (
     pluginId: string,
     action: PluginShareAction,
     locale?: string,
   ) => Promise<PluginShareProjectOutcome>;
-  onImportClaudeDesign: (file: File) => Promise<void> | void;
+  onImportClaudeDesign: (
+    file: File,
+  ) => Promise<ImportClaudeDesignOutcome | void> | ImportClaudeDesignOutcome | void;
   onImportFolder?: (baseDir: string) => Promise<void> | void;
-  onImportFolderResponse?: (response: ImportFolderResponse) => Promise<void> | void;
-  onOpenProject: (id: string) => void;
+  onImportFolderResponse?: (response: OpenDesignHostProjectImportSuccess) => Promise<void> | void;
+  onOpenProject: (id: string) => Promise<boolean> | boolean | void;
   onOpenLiveArtifact: (projectId: string, artifactId: string) => void;
   onDeleteProject: (id: string) => void;
   onRenameProject: (id: string, name: string) => void;
+  onProjectsRefresh?: () => Promise<void> | void;
   onChangeDefaultDesignSystem: (id: string) => void;
+  onCreateDesignSystem?: () => void;
+  onOpenDesignSystem?: (id: string) => void;
+  onDesignSystemsRefresh?: () => Promise<void> | void;
   onPersistComposioKey: (composio: AppConfig['composio']) => Promise<void> | void;
-  onOpenSettings: (section?: 'execution' | 'media' | 'composio' | 'orbit' | 'integrations' | 'mcpClient' | 'language' | 'appearance' | 'notifications' | 'pet' | 'library' | 'about') => void;
+  onOpenSettings: (section?: 'execution' | 'media' | 'composio' | 'orbit' | 'integrations' | 'mcpClient' | 'language' | 'appearance' | 'notifications' | 'pet' | 'projectLocations' | 'library' | 'about' | 'memory' | 'designSystems') => void;
+  onCompleteOnboarding: () => void;
 }
-
-const CONNECTOR_CALLBACK_MESSAGE_TYPE = 'open-design:connector-connected';
 
 export function isTrustedConnectorCallbackOrigin(origin: string, currentOrigin?: string): boolean {
   const expectedOrigin = currentOrigin ?? (typeof window === 'undefined' ? '' : window.location.origin);
@@ -122,24 +133,6 @@ export function isTrustedConnectorCallbackOrigin(origin: string, currentOrigin?:
   } catch {
     return false;
   }
-}
-
-function applyConnectorStatuses(
-  current: ConnectorDetail[],
-  statuses: ConnectorStatusResponse['statuses'],
-): ConnectorDetail[] {
-  if (!Object.keys(statuses).length) return current;
-  return current.map((connector) => {
-    const next = statuses[connector.id];
-    if (!next) return connector;
-    const { accountLabel: _accountLabel, lastError: _lastError, ...base } = connector;
-    return {
-      ...base,
-      status: next.status,
-      ...(next.accountLabel === undefined ? {} : { accountLabel: next.accountLabel }),
-      ...(next.lastError === undefined ? {} : { lastError: next.lastError }),
-    };
-  });
 }
 
 export function sortConnectorsForDisplay(connectors: ConnectorDetail[]): ConnectorDetail[] {
@@ -233,7 +226,10 @@ export function EntryView({
   promptTemplates,
   defaultDesignSystemId,
   agents,
+  agentsLoading,
   config,
+  providerModelsCache,
+  onProviderModelsCacheChange,
   integrationInitialTab,
   composioConfigLoading = false,
   daemonLive,
@@ -242,6 +238,8 @@ export function EntryView({
   onAgentModelChange,
   onApiProtocolChange,
   onApiModelChange,
+  onConfigPersist,
+  onRefreshAgents,
   onThemeChange,
   skillsLoading = false,
   designSystemsLoading = false,
@@ -256,16 +254,20 @@ export function EntryView({
   onOpenLiveArtifact,
   onDeleteProject,
   onRenameProject,
+  onProjectsRefresh,
   onChangeDefaultDesignSystem,
+  onCreateDesignSystem,
+  onOpenDesignSystem,
+  onDesignSystemsRefresh,
   onPersistComposioKey,
   onOpenSettings,
+  onCompleteOnboarding,
 }: Props) {
   const [connectors, setConnectors] = useState<ConnectorDetail[]>([]);
   const [connectorsLoading, setConnectorsLoading] = useState(false);
 
-  const reloadConnectorStatuses = useCallback(async () => {
-    const statuses = await fetchConnectorStatuses();
-    setConnectors((curr) => applyConnectorStatuses(curr, statuses));
+  const reloadConnectorCatalog = useCallback(async (options: { refreshDiscovery?: boolean } = {}) => {
+    setConnectors(await fetchConnectorCatalogSnapshot(options));
   }, []);
 
   useEffect(() => {
@@ -275,7 +277,7 @@ export function EntryView({
     // open the Settings → Connectors surface.
     setConnectorsLoading(true);
     (async () => {
-      const next = await fetchConnectors();
+      const next = await fetchConnectorCatalogSnapshot();
       if (cancelled) return;
       setConnectors(next);
       setConnectorsLoading(false);
@@ -290,11 +292,18 @@ export function EntryView({
       const data = event.data;
       if (!data || typeof data !== 'object' || (data as { type?: unknown }).type !== CONNECTOR_CALLBACK_MESSAGE_TYPE) return;
       if (!isTrustedConnectorCallbackOrigin(event.origin)) return;
-      void reloadConnectorStatuses();
+      void reloadConnectorCatalog({ refreshDiscovery: true });
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [reloadConnectorStatuses]);
+  }, [reloadConnectorCatalog]);
+
+  useEffect(() => {
+    function onConnectorsChanged() {
+      void reloadConnectorCatalog({ refreshDiscovery: true });
+    }
+    return listenForConnectorsChanged(onConnectorsChanged);
+  }, [reloadConnectorCatalog]);
 
   // When the OAuth flow is handed off to the user's system browser (desktop
   // shell opens connector auth URLs externally rather than in an Electron
@@ -302,19 +311,31 @@ export function EntryView({
   // Refresh connector statuses whenever the window regains focus so the UI
   // picks up a just-completed connection without manual intervention.
   useEffect(() => {
-    function onFocus() {
-      void reloadConnectorStatuses();
+    function refreshAfterReturn() {
+      void reloadConnectorCatalog({ refreshDiscovery: true });
     }
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [reloadConnectorStatuses]);
+    function onVisibilityChange() {
+      if (document.visibilityState !== 'visible') return;
+      refreshAfterReturn();
+    }
+    window.addEventListener('focus', refreshAfterReturn);
+    window.addEventListener('pageshow', refreshAfterReturn);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', refreshAfterReturn);
+      window.removeEventListener('pageshow', refreshAfterReturn);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [reloadConnectorCatalog]);
 
   return (
     <EntryShell
       skills={skills}
+      designTemplates={designTemplates}
       designSystems={designSystems}
       projects={projects}
       templates={templates}
+      onDeleteTemplate={onDeleteTemplate}
       promptTemplates={promptTemplates}
       defaultDesignSystemId={defaultDesignSystemId}
       connectors={connectors}
@@ -325,13 +346,18 @@ export function EntryView({
       designSystemsLoading={designSystemsLoading}
       projectsLoading={projectsLoading}
       config={config}
+      providerModelsCache={providerModelsCache}
+      onProviderModelsCacheChange={onProviderModelsCacheChange}
       agents={agents}
+      {...(agentsLoading !== undefined ? { agentsLoading } : {})}
       daemonLive={daemonLive}
       onModeChange={onModeChange}
       onAgentChange={onAgentChange}
       onAgentModelChange={onAgentModelChange}
       onApiProtocolChange={onApiProtocolChange}
       onApiModelChange={onApiModelChange}
+      onConfigPersist={onConfigPersist}
+      onRefreshAgents={onRefreshAgents}
       onThemeChange={onThemeChange}
       onCreateProject={onCreateProject}
       onCreatePluginShareProject={onCreatePluginShareProject}
@@ -342,9 +368,14 @@ export function EntryView({
       onOpenLiveArtifact={onOpenLiveArtifact}
       onDeleteProject={onDeleteProject}
       onRenameProject={onRenameProject}
+      onProjectsRefresh={onProjectsRefresh}
       onChangeDefaultDesignSystem={onChangeDefaultDesignSystem}
+      onCreateDesignSystem={onCreateDesignSystem}
+      onOpenDesignSystem={onOpenDesignSystem}
+      onDesignSystemsRefresh={onDesignSystemsRefresh}
       onPersistComposioKey={onPersistComposioKey}
       onOpenSettings={onOpenSettings}
+      onCompleteOnboarding={onCompleteOnboarding}
     />
   );
 }

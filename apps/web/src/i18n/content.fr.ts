@@ -84,7 +84,6 @@ export const FR_SKILL_COPY: Record<string, { description?: string; examplePrompt
   },
   'html-ppt': {},
   'html-ppt-course-module': {},
-  'html-ppt-dir-key-nav-minimal': {},
   'html-ppt-graphify-dark-graph': {},
   'html-ppt-hermes-cyber-terminal': {},
   'html-ppt-knowledge-arch-blueprint': {},
@@ -96,7 +95,6 @@ export const FR_SKILL_COPY: Record<string, { description?: string; examplePrompt
   'html-ppt-testing-safety-alert': {},
   'html-ppt-weekly-report': {},
   'html-ppt-xhs-pastel-card': {},
-  'html-ppt-xhs-post': {},
   'html-ppt-xhs-white-editorial': {},
   'hyperframes': {
     examplePrompt:
@@ -319,6 +317,7 @@ export const FR_DESIGN_SYSTEM_CATEGORIES: Record<string, string> = {
   'Media & Consumer': 'Médias & grand public',
   'Social & Messaging': 'Réseaux sociaux & messageries',
   Automotive: 'Automobile',
+  Product: 'Produit',
   'Editorial & Print': 'Éditorial & print',
   'Editorial · Studio': 'Éditorial · Studio',
   'Retro & Nostalgic': 'Rétro & nostalgique',
@@ -787,6 +786,11 @@ export const FR_PROMPT_TEMPLATE_COPY: Record<string, Partial<Pick<PromptTemplate
     title: 'HyperFrames : money counter hype $0 → $10K (9:16)',
     summary:
       'Clip hype vertical HyperFrames 1080×1920 de 6 secondes — compteur style Apple de $0 à $10,000 avec flash vert, particules money-burst, icône cash stack et kicker headline. Bâti sur le bloc HyperFrames `apple-money-count`.',
+  },
+  'weread-year-in-review-video-template': {
+    title: 'Template vidéo WeRead Year in Review',
+    summary:
+      'Template vidéo HyperFrames 9:16 pour rapports annuels de lecture façon WeRead : papier chaud, typographie chinoise éditoriale, transitions de pages, statistiques de lecture, traces de notes, mots-clés d’intérêt et carte finale de persona lecteur.',
   },
   'hyperframes-product-reveal-minimal': {
     title: 'HyperFrames : product reveal minimal de 5 secondes',

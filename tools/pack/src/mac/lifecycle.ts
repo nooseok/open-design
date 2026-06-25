@@ -12,6 +12,7 @@ import {
   type DesktopEvalResult,
   type DesktopScreenshotResult,
   type DesktopStatusSnapshot,
+  type DesktopUpdateResult,
   type SidecarStamp,
 } from "@open-design/sidecar-proto";
 import { createSidecarLaunchEnv, requestJsonIpc, resolveAppIpcPath } from "@open-design/sidecar";
@@ -26,14 +27,17 @@ import {
   stopProcesses,
 } from "@open-design/platform";
 import type { ToolPackConfig } from "../config.js";
+import { readToolPackLauncherRuntimeSnapshot } from "../launcher-runtime-snapshot.js";
+import { readToolPackUpdateCacheLifecycleSnapshot } from "../update-cache-lifecycle-snapshot.js";
 import { PACKAGED_CONFIG_PATH_ENV, writeLaunchPackagedConfig } from "./app-config.js";
 import { DESKTOP_LOG_ECHO_ENV } from "./constants.js";
-import { clearQuarantine, pathExists } from "./fs.js";
+import { pathExists, scrubMacExtendedAttributes } from "./fs.js";
 import { resolveMacInstallIdentity } from "./identity.js";
 import { desktopIdentityPath, desktopLogPath, macAppExecutablePath, resolveMacPaths } from "./paths.js";
 import type { DesktopRootIdentityFallback, DesktopRootIdentityMarker, MacCleanupResult, MacInspectResult, MacInstallResult, MacStartResult, MacStartSource, MacStopResult, MacUninstallResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const UPDATE_ACTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 function desktopStamp(config: ToolPackConfig): SidecarStamp {
   return {
@@ -317,10 +321,12 @@ async function collectLaunchXattrSummary(appPath: string): Promise<string[]> {
     const lines = nonEmptyLines(result.stdout);
     const quarantine = lines.filter((line) => line.includes("com.apple.quarantine"));
     const provenance = lines.filter((line) => line.includes("com.apple.provenance"));
-    const matched = [...quarantine, ...provenance];
+    const macl = lines.filter((line) => line.includes("com.apple.macl"));
+    const matched = [...quarantine, ...provenance, ...macl];
     return [
       `quarantine entries: ${quarantine.length}`,
       `provenance entries: ${provenance.length}`,
+      `macl entries: ${macl.length}`,
       ...(matched.length === 0 ? [] : tailLines(matched, 8).map((line) => truncateLine(line))),
     ];
   } catch (error) {
@@ -503,7 +509,7 @@ export async function installPackedMacDmg(config: ToolPackConfig): Promise<MacIn
       "-quiet",
     ]);
     await execFileAsync("ditto", [join(paths.mountPoint, identity.publicAppBundleName), paths.installedAppPath]);
-    await clearQuarantine(paths.installedAppPath);
+    await scrubMacExtendedAttributes(paths.installedAppPath);
   } finally {
     detached = await detachMount(paths.mountPoint);
   }
@@ -675,13 +681,20 @@ export async function readPackedMacLogs(config: ToolPackConfig) {
   };
 }
 
-export async function inspectPackedMacApp(config: ToolPackConfig, options: { expr?: string; path?: string }): Promise<MacInspectResult> {
+function resolveUpdateAction(value: string | undefined): "status" | "check" | "download" | "install" | null {
+  if (value == null) return null;
+  if (value === "status" || value === "check" || value === "download" || value === "install") return value;
+  throw new Error("--update-action must be status, check, download, or install");
+}
+
+export async function inspectPackedMacApp(config: ToolPackConfig, options: { expr?: string; path?: string; updateAction?: string }): Promise<MacInspectResult> {
   const stamp = desktopStamp(config);
   const status = await requestJsonIpc<DesktopStatusSnapshot>(
     stamp.ipc,
     { type: SIDECAR_MESSAGES.STATUS },
     { timeoutMs: 2000 },
   ).catch(() => null);
+  const updateAction = resolveUpdateAction(options.updateAction);
 
   return {
     ...(options.expr == null ? {} : {
@@ -691,11 +704,20 @@ export async function inspectPackedMacApp(config: ToolPackConfig, options: { exp
         { timeoutMs: 5000 },
       ),
     }),
+    launcher: await readToolPackLauncherRuntimeSnapshot(config),
+    updateCache: await readToolPackUpdateCacheLifecycleSnapshot(config),
     ...(options.path == null ? {} : {
       screenshot: await requestJsonIpc<DesktopScreenshotResult>(
         stamp.ipc,
         { input: { path: options.path }, type: SIDECAR_MESSAGES.SCREENSHOT },
         { timeoutMs: 10000 },
+      ),
+    }),
+    ...(updateAction == null ? {} : {
+      update: await requestJsonIpc<DesktopUpdateResult>(
+        stamp.ipc,
+        { input: { action: updateAction }, type: SIDECAR_MESSAGES.UPDATE },
+        { timeoutMs: UPDATE_ACTION_TIMEOUT_MS },
       ),
     }),
     status,

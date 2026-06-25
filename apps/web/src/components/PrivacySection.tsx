@@ -1,4 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
+import { useAnalytics } from '../analytics/provider';
+import { trackSettingsPrivacyClick } from '../analytics/events';
 import { useT } from '../i18n';
 import { Icon } from './Icon';
 import type { AppConfig, TelemetryConfig } from '../types';
@@ -19,6 +21,7 @@ function generateInstallationId(): string {
 
 export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
   const t = useT();
+  const analytics = useAnalytics();
   const telemetry: TelemetryConfig = cfg.telemetry ?? {};
   // `privacyDecisionAt` gates the consent surface. installationId is only
   // the anonymous reporting id and can be rotated by Delete my data without
@@ -46,7 +49,7 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
       ...c,
       installationId: generateInstallationId(),
       privacyDecisionAt: Date.now(),
-      telemetry: { metrics: true, content: true, artifactManifest: false },
+      telemetry: { metrics: true, content: true },
     }));
   }
 
@@ -55,7 +58,7 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
       ...c,
       installationId: null,
       privacyDecisionAt: Date.now(),
-      telemetry: { metrics: false, content: false, artifactManifest: false },
+      telemetry: { metrics: false, content: false },
     }));
   }
 
@@ -64,7 +67,7 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
       ...c,
       installationId: generateInstallationId(),
       privacyDecisionAt: c.privacyDecisionAt ?? Date.now(),
-      telemetry: { metrics: false, content: false, artifactManifest: false },
+      telemetry: { metrics: false, content: false },
     }));
   }
 
@@ -79,19 +82,29 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
               label={t('settings.privacyMetrics')}
               hint={t('settings.privacyMetricsHint')}
               checked={telemetry.metrics === true}
-              onChange={(v) => patchTelemetry({ metrics: v })}
+              onChange={(v) => {
+                trackSettingsPrivacyClick(analytics.track, {
+                  page_name: 'settings',
+                  area: 'privacy',
+                  element: 'anonymous_metrics',
+                  anonymous_metrics_status: v ? 'on' : 'off',
+                });
+                patchTelemetry({ metrics: v });
+              }}
             />
             <ToggleRow
               label={t('settings.privacyContent')}
               hint={t('settings.privacyContentHint')}
               checked={telemetry.content === true}
-              onChange={(v) => patchTelemetry({ content: v })}
-            />
-            <ToggleRow
-              label={t('settings.privacyArtifacts')}
-              hint={t('settings.privacyArtifactsHint')}
-              checked={telemetry.artifactManifest === true}
-              onChange={(v) => patchTelemetry({ artifactManifest: v })}
+              onChange={(v) => {
+                trackSettingsPrivacyClick(analytics.track, {
+                  page_name: 'settings',
+                  area: 'privacy',
+                  element: 'conversation_and_tool_content',
+                  conversation_and_tool_content_status: v ? 'on' : 'off',
+                });
+                patchTelemetry({ content: v });
+              }}
             />
           </div>
 
@@ -113,7 +126,14 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
             <button
               type="button"
               className="ghost"
-              onClick={deleteMyData}
+              onClick={() => {
+                trackSettingsPrivacyClick(analytics.track, {
+                  page_name: 'settings',
+                  area: 'privacy',
+                  element: 'delete_my_data',
+                });
+                deleteMyData();
+              }}
               style={{ alignSelf: 'flex-start', marginTop: 12 }}
             >
               <Icon name="trash" size={13} />

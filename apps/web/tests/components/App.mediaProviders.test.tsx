@@ -15,7 +15,7 @@ import {
 } from '../../src/state/config';
 import {
   daemonIsLive,
-  fetchAgents,
+  fetchAgentsStream,
   fetchAppVersionInfo,
   fetchDesignSystems,
   fetchPromptTemplates,
@@ -98,7 +98,7 @@ vi.mock('../../src/providers/registry', async () => {
   return {
     ...actual,
     daemonIsLive: vi.fn(),
-    fetchAgents: vi.fn(),
+    fetchAgentsStream: vi.fn(),
     fetchAppVersionInfo: vi.fn(),
     fetchDesignSystems: vi.fn(),
     fetchPromptTemplates: vi.fn(),
@@ -133,7 +133,7 @@ vi.mock('../../src/state/config', async () => {
 });
 
 const mockedDaemonIsLive = vi.mocked(daemonIsLive);
-const mockedFetchAgents = vi.mocked(fetchAgents);
+const mockedFetchAgentsStream = vi.mocked(fetchAgentsStream);
 const mockedFetchAppVersionInfo = vi.mocked(fetchAppVersionInfo);
 const mockedFetchDesignSystems = vi.mocked(fetchDesignSystems);
 const mockedFetchPromptTemplates = vi.mocked(fetchPromptTemplates);
@@ -168,7 +168,7 @@ const baseConfig: AppConfig = {
 describe('App media provider sync flows', () => {
   beforeEach(() => {
     mockedDaemonIsLive.mockResolvedValue(true);
-    mockedFetchAgents.mockResolvedValue([]);
+    mockedFetchAgentsStream.mockResolvedValue([]);
     mockedFetchSkills.mockResolvedValue([]);
     mockedFetchDesignSystems.mockResolvedValue([]);
     mockedFetchPromptTemplates.mockResolvedValue([]);
@@ -218,11 +218,12 @@ describe('App media provider sync flows', () => {
   it('forces a media provider sync when settings are saved', async () => {
     mockedLoadConfig.mockReturnValue({
       ...baseConfig,
-      onboardingCompleted: false,
+      onboardingCompleted: true,
       privacyDecisionAt: 1778244000000,
     });
 
     render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open media settings' }));
 
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'Settings dialog' })).toBeTruthy();
@@ -245,7 +246,7 @@ describe('App media provider sync flows', () => {
 
     expect(mockedSaveConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        onboardingCompleted: false,
+        onboardingCompleted: true,
         mediaProviders: {
           openai: {
             apiKey: 'media-key',
@@ -257,7 +258,7 @@ describe('App media provider sync flows', () => {
     );
     expect(mockedSyncConfigToDaemon).toHaveBeenCalledWith(
       expect.objectContaining({
-        onboardingCompleted: false,
+        onboardingCompleted: true,
         mediaProviders: {
           openai: {
             apiKey: 'media-key',
@@ -266,6 +267,7 @@ describe('App media provider sync flows', () => {
           },
         },
       }),
+      expect.objectContaining({ throwOnError: true }),
     );
   });
 });

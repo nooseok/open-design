@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   APP_KEYS,
+  DESKTOP_UPDATE_ACTIONS,
+  DESKTOP_UPDATE_CHANNELS,
+  DESKTOP_UPDATE_MODES,
+  DESKTOP_UPDATE_STATES,
   normalizeDaemonSidecarMessage,
   normalizeDesktopSidecarMessage,
   normalizeNamespace,
@@ -36,6 +40,11 @@ describe("open-design sidecar contract", () => {
       namespace: STAMP_NAMESPACE_FLAG,
       source: STAMP_SOURCE_FLAG,
     });
+    expect(OPEN_DESIGN_SIDECAR_CONTRACT.updateActions).toBe(DESKTOP_UPDATE_ACTIONS);
+    expect(OPEN_DESIGN_SIDECAR_CONTRACT.updateChannels).toBe(DESKTOP_UPDATE_CHANNELS);
+    expect(Object.values(DESKTOP_UPDATE_CHANNELS)).toEqual(["beta", "betas", "prerelease", "preview", "stable"]);
+    expect(OPEN_DESIGN_SIDECAR_CONTRACT.updateModes).toBe(DESKTOP_UPDATE_MODES);
+    expect(OPEN_DESIGN_SIDECAR_CONTRACT.updateStates).toBe(DESKTOP_UPDATE_STATES);
   });
 
   it("accepts the explicit namespace contract", () => {
@@ -75,6 +84,29 @@ describe("open-design sidecar contract", () => {
     expect(normalizeDaemonSidecarMessage(message)).toEqual(message);
   });
 
+  it("accepts a mint-import-token payload with a baseDir", () => {
+    const message = {
+      input: { baseDir: "/Users/u/project" },
+      type: SIDECAR_MESSAGES.MINT_IMPORT_TOKEN,
+    };
+    expect(normalizeDaemonSidecarMessage(message)).toEqual(message);
+  });
+
+  it("rejects malformed mint-import-token payloads", () => {
+    expect(() =>
+      normalizeDaemonSidecarMessage({
+        input: { baseDir: "" },
+        type: SIDECAR_MESSAGES.MINT_IMPORT_TOKEN,
+      }),
+    ).toThrow(/baseDir/i);
+    expect(() =>
+      normalizeDaemonSidecarMessage({
+        input: { baseDir: "/Users/u/project", extra: true },
+        type: SIDECAR_MESSAGES.MINT_IMPORT_TOKEN,
+      }),
+    ).toThrow(/extra/i);
+  });
+
   it("rejects register-desktop-auth payloads that are not base64-shaped", () => {
     expect(() =>
       normalizeDaemonSidecarMessage({
@@ -97,6 +129,7 @@ describe("open-design sidecar contract", () => {
   });
 
   it("validates desktop IPC message inputs", () => {
+    expect(normalizeDesktopSidecarMessage({ type: SIDECAR_MESSAGES.SHOW })).toEqual({ type: "show" });
     expect(normalizeDesktopSidecarMessage({ input: { expression: "location.href" }, type: SIDECAR_MESSAGES.EVAL })).toEqual({
       input: { expression: "location.href" },
       type: "eval",
@@ -160,5 +193,60 @@ describe("open-design sidecar contract", () => {
         type: SIDECAR_MESSAGES.EXPORT_PDF,
       }),
     ).toThrow();
+  });
+
+  it("accepts PNG/JPEG artifact image export and rejects WebP up front", () => {
+    // The off-screen Electron renderer (nativeImage) can only encode PNG/JPEG.
+    for (const imageFormat of ["png", "jpeg"] as const) {
+      expect(
+        normalizeDesktopSidecarMessage({
+          input: { deck: false, format: "image", html: "<p>x</p>", imageFormat, title: "Shot" },
+          type: SIDECAR_MESSAGES.EXPORT_ARTIFACT,
+        }),
+      ).toEqual({
+        input: { deck: false, format: "image", html: "<p>x</p>", imageFormat, title: "Shot" },
+        type: "export-artifact",
+      });
+    }
+    // WebP must fail fast with a clear error rather than silently downgrade to PNG.
+    expect(() =>
+      normalizeDesktopSidecarMessage({
+        input: { deck: false, format: "image", html: "<p>x</p>", imageFormat: "webp", title: "Shot" },
+        type: SIDECAR_MESSAGES.EXPORT_ARTIFACT,
+      }),
+    ).toThrow(/unsupported artifact export image format/);
+  });
+
+  it("validates desktop update IPC message inputs", () => {
+    expect(
+      normalizeDesktopSidecarMessage({
+        input: { action: DESKTOP_UPDATE_ACTIONS.CHECK },
+        type: SIDECAR_MESSAGES.UPDATE,
+      }),
+    ).toEqual({
+      input: { action: "check" },
+      type: "update",
+    });
+    expect(
+      normalizeDesktopSidecarMessage({
+        input: { action: DESKTOP_UPDATE_ACTIONS.INSTALL },
+        type: SIDECAR_MESSAGES.UPDATE,
+      }),
+    ).toEqual({
+      input: { action: "install" },
+      type: "update",
+    });
+    expect(() =>
+      normalizeDesktopSidecarMessage({
+        input: { action: "apply" },
+        type: SIDECAR_MESSAGES.UPDATE,
+      }),
+    ).toThrow(/unsupported desktop update action/);
+    expect(() =>
+      normalizeDesktopSidecarMessage({
+        input: { action: "status", path: "/tmp/update.dmg" },
+        type: SIDECAR_MESSAGES.UPDATE,
+      }),
+    ).toThrow(/unsupported fields/);
   });
 });

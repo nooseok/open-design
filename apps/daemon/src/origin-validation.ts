@@ -9,6 +9,7 @@ export interface RequestWithOriginHeaders {
     host?: unknown;
     origin?: unknown;
     'x-forwarded-host'?: unknown;
+    'sec-fetch-site'?: unknown;
   };
 }
 
@@ -207,7 +208,23 @@ export function isLocalSameOrigin(
   );
 
   const localHostAllowed = isAllowedBrowserHost(host, ports, bindHost, ipOnlyExtraOrigins);
-  if (origin == null || origin === '') return localHostAllowed;
+  if (origin == null || origin === '') {
+    if (localHostAllowed) return true;
+    // Browsers (Firefox, Chrome) omit Origin on same-origin GET subresource
+    // requests per the Fetch spec, which made hostname entries in
+    // OD_ALLOWED_ORIGINS unreachable for legitimate same-origin GETs
+    // through a reverse proxy. Sec-Fetch-Site is set by the user agent and
+    // cannot be modified by JavaScript, so a value of "same-origin"
+    // attests that the request originated from the same origin as the
+    // target — a cross-site `<img>`/`<script>` exploit would carry
+    // "cross-site" instead. Only consult the broader allow-list once that
+    // signal is present.
+    const fetchSite = headerValue(req.headers?.['sec-fetch-site']);
+    if (fetchSite === 'same-origin') {
+      return isAllowedBrowserHost(host, ports, bindHost, extraAllowedOrigins);
+    }
+    return false;
+  }
   // Reverse-proxy deployments (e.g. Nginx in front of the daemon) terminate
   // the browser connection at the proxy and open a fresh upstream
   // connection to the daemon. The Host header the daemon sees is the
@@ -223,4 +240,36 @@ function headerValue(value: unknown): string | undefined {
     return first == null ? undefined : String(first);
   }
   return value == null ? undefined : String(value);
+}
+
+/**
+ * Zero-config OD Clipper bypass for the `/api` origin middleware.
+ *
+ * `apiRelativePath` MUST be `req.path` as observed INSIDE `app.use('/api', …)`.
+ * Express strips the mounted `/api` prefix there, so a request to
+ * `/api/library/ingest` arrives as `/library/ingest`. Matching `'/library/'`
+ * is therefore the correct (and only working) prefix — matching
+ * `'/api/library/'` here would never fire because the mount prefix is gone.
+ *
+ * Returns true only for a locally-installed browser extension (an origin a web
+ * page cannot forge) targeting the narrow OD Clipper bootstrap surface: the
+ * dedicated probe route and the ingest endpoint. Library reads still require
+ * normal same-origin / allow-list validation so an unrelated installed
+ * extension cannot enumerate or download the user's library.
+ */
+export function isZeroConfigClipperLibraryRequest(
+  method: string,
+  apiRelativePath: string,
+  origin: unknown,
+): boolean {
+  const normalizedMethod = method.toUpperCase();
+  const isAllowedClipperPath =
+    (normalizedMethod === 'GET' && apiRelativePath === '/library/clipper-probe') ||
+    ((normalizedMethod === 'OPTIONS' || normalizedMethod === 'POST') &&
+      apiRelativePath === '/library/ingest');
+  if (!isAllowedClipperPath) return false;
+  return (
+    typeof origin === 'string' &&
+    (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://'))
+  );
 }

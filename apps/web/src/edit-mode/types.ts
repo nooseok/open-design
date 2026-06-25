@@ -63,6 +63,7 @@ export interface ManualEditTarget {
   attributes: Record<string, string>;
   styles: ManualEditStyles;
   isLayoutContainer: boolean;
+  isHidden?: boolean;
   outerHtml: string;
 }
 
@@ -70,6 +71,7 @@ export type ManualEditPatch =
   | { id: string; kind: 'set-text'; value: string }
   | { id: string; kind: 'set-link'; text: string; href: string }
   | { id: string; kind: 'set-image'; src: string; alt: string }
+  | { id: string; kind: 'remove-element' }
   | { kind: 'set-token'; token: string; value: string }
   | { id: string; kind: 'set-style'; styles: Partial<ManualEditStyles> }
   | { id: string; kind: 'set-attributes'; attributes: Record<string, string> }
@@ -95,6 +97,15 @@ export interface ManualEditSelectMessage {
   target: ManualEditTarget;
 }
 
+export interface ManualEditHoverMessage {
+  type: 'od-edit-hover';
+  target: ManualEditTarget;
+}
+
+export interface ManualEditBackgroundMessage {
+  type: 'od-edit-background';
+}
+
 export interface ManualEditPreviewAppliedMessage {
   type: 'od-edit-preview-style-applied';
   id: string;
@@ -103,10 +114,28 @@ export interface ManualEditPreviewAppliedMessage {
   error?: string;
 }
 
+export interface ManualEditTextCommitMessage {
+  type: 'od-edit-text-commit';
+  id: string;
+  value: string;
+}
+
+export interface ManualEditTextSessionMessage {
+  type: 'od-edit-text-session';
+  id: string;
+  active: boolean;
+  changed?: boolean;
+  committed?: boolean;
+}
+
 export type ManualEditBridgeMessage =
   | ManualEditTargetMessage
   | ManualEditSelectMessage
-  | ManualEditPreviewAppliedMessage;
+  | ManualEditHoverMessage
+  | ManualEditBackgroundMessage
+  | ManualEditPreviewAppliedMessage
+  | ManualEditTextCommitMessage
+  | ManualEditTextSessionMessage;
 
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
   'fontFamily', 'fontSize', 'fontWeight', 'color', 'textAlign', 'lineHeight', 'letterSpacing',
